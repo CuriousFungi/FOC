@@ -1,0 +1,27 @@
+../Core/Src/sensors/AS5048A.cpp:25:1:AS5048A::AS5048A(SPI_HandleTypeDef*, GPIO_TypeDef*, uint16_t)	4	static
+../Core/Src/sensors/AS5048A.cpp:116:7:float AS5048A::get_radians_per_second()	0	static
+../Core/Src/sensors/AS5048A.cpp:124:7:void AS5048A::invert_output(bool)	0	static
+../Core/Src/sensors/AS5048A.cpp:136:10:uint16_t readWithDeadband(uint16_t)	0	static
+../Core/Src/sensors/AS5048A.cpp:147:10:uint16_t convertToSineDAC(uint16_t)	24	static
+../Core/Src/sensors/AS5048A.cpp:216:10:uint16_t smoothDACOutput(uint16_t)	0	static
+../Core/Src/sensors/AS5048A.cpp:298:7:float AS5048A::get_angle_radians()	0	static
+../Core/Src/sensors/AS5048A.cpp:306:7:float AS5048A::convert_count_to_degrees(uint16_t)	0	static
+../Core/Src/sensors/AS5048A.cpp:338:6:bool AS5048A::error_detected()	0	static
+../Core/Src/sensors/AS5048A.cpp:382:6:void AS5048A::set_zero_position_count(uint16_t)	0	static
+../Core/Src/sensors/AS5048A.cpp:390:10:uint16_t AS5048A::get_zero_position_count()	0	static
+../Core/Src/sensors/AS5048A.cpp:398:7:float AS5048A::normalize_angle_degrees(float)	8	static
+../Core/Src/sensors/AS5048A.cpp:425:6:void AS5048A::delay_microseconds(uint32_t)	16	static
+../Core/Src/sensors/AS5048A.cpp:527:9:uint8_t AS5048A::spiCalcEvenParity(uint16_t)	0	static
+../Core/Src/sensors/AS5048A.cpp:437:10:uint16_t AS5048A::read_register(uint16_t)	32	static
+../Core/Src/sensors/AS5048A.cpp:317:10:uint32_t AS5048A::get_raw_count()	8	static
+../Core/Src/sensors/AS5048A.cpp:227:7:float AS5048A::read_angle_radians()	16	static
+../Core/Src/sensors/AS5048A.cpp:64:6:void AS5048A::update()	16	static
+../Core/Src/sensors/AS5048A.cpp:328:10:uint16_t AS5048A::get_state()	8	static
+../Core/Src/sensors/AS5048A.cpp:354:9:uint8_t AS5048A::get_gain()	8	static
+../Core/Src/sensors/AS5048A.cpp:364:9:uint8_t AS5048A::get_diagnostic()	8	static
+../Core/Src/sensors/AS5048A.cpp:346:6:void AS5048A::clear_error()	8	static
+../Core/Src/sensors/AS5048A.cpp:374:10:uint16_t AS5048A::get_errors()	8	static
+../Core/Src/sensors/AS5048A.cpp:475:10:uint16_t AS5048A::write_register(uint16_t, uint16_t)	24	static
+../Core/Src/sensors/AS5048A.cpp:546:9:int16_t AS5048A::get_counts_advanced_past_position()	8	static
+../Core/Src/sensors/AS5048A.cpp:568:7:float AS5048A::get_mechanical_phase_angle_radians()	0	static
+../Core/Src/sensors/AS5048A.cpp:576:7:float AS5048A::get_accumulated_radians()	0	static

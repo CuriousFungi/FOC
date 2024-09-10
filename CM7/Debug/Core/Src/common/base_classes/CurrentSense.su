@@ -1,0 +1,3 @@
+../Core/Src/common/base_classes/CurrentSense.cpp:7:7:virtual float CurrentSense::getDCCurrent(float)	48	static
+../Core/Src/common/base_classes/CurrentSense.cpp:55:13:DQCurrent_s CurrentSense::getFOCCurrents(float)	72	static
+../Core/Src/common/base_classes/CurrentSense.cpp:97:6:void CurrentSense::linkDriver(BLDCDriver*)	0	static

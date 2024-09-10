@@ -1,0 +1,1403 @@
+#include "StepperMotor.hpp"
+//#include "./communication/SimpleFOCDebug.hpp"
+#include "stm32f4xx_hal.h"
+
+
+#include "../sensors/AS5048A.hpp"
+#include "../../Inc/EnumValue.hpp"
+#include "../../Inc/clamp.hpp"
+
+// TODO: eliminate
+//#define _constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+
+#include <math.h>
+
+//#include <iostream>
+//#include <cmath>
+
+
+// StepperMotor(int pp)
+// - pp            - pole pair number
+// - R             - motor phase resistance
+// - KV            - motor kv rating (rmp/v)
+// - L             - motor phase inductance [H]
+StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi, 
+                                GPIO_TypeDef*      p_sensor_chip_select_port,
+                                uint16_t           sensor_chip_select_pin,
+                                int                pole_pairs, 
+                                float              phase_resistance, 
+                                float              KV, 
+                                float              phase_inductance,
+                                float              voltage_limit,
+                                float              power_supply_voltage,
+                                TIM_HandleTypeDef* p_htim_phase_1,
+                                TIM_HandleTypeDef* p_htim_phase_2,
+                                uint32_t           timer_channel_phase_1A,
+                                uint32_t           timer_channel_phase_1B,
+                                uint32_t           timer_channel_phase_2A,
+                                uint32_t           timer_channel_phase_2B
+)
+:     TWO_PI(         6.28318530718f)
+,     THREE_PI(       9.42477796077f)
+,     THREE_HALVES_PI(4.71238898038f)
+,     RAD_PER_SEC_TO_REV_PER_MIN(60.0f/TWO_PI)
+,     NUM_POLE_PAIRS(static_cast<float>(pole_pairs))
+,     KV_RPM_PER_VOLT(KV*_SQRT2)  // save back emf constant KV = 1/K_bemf
+,     PHASE_RESISTANCE(phase_resistance)
+,     PHASE_INDUCTANCE(phase_inductance)
+,     PHASE_INDUCTANCE_INVERSE(1.0f/PHASE_INDUCTANCE)
+,     m_sensor(hspi,
+               p_sensor_chip_select_port, 
+		       sensor_chip_select_pin)
+,     m_driver(p_htim_phase_1,
+               p_htim_phase_2,
+               voltage_limit,
+               power_supply_voltage,
+               timer_channel_phase_1A,
+               timer_channel_phase_1B,
+               timer_channel_phase_2A,
+               timer_channel_phase_2B
+               )		     
+,     m_U_alpha(0.0f)
+,     m_U_beta(0.0f)
+,     m_prev_open_loop_timestamp_us(0)
+//------------------------------------------
+//    from FOCMotor
+//------------------------------------------
+,   m_target(0.0f)
+,   m_target_prev(0.0)
+,   m_target_prev_timestamp(0l)
+,   m_feed_forward_velocity(0.0f)
+,   m_shaft_angle(0.0f)
+//,   m_electrical_angle(0.0f)
+,   m_omega_mechanical_rps(0.0f)
+//,   m_omega_electrical_rps(0.0f)
+,   m_current_sp(0.0f)
+,   m_shaft_velocity_target(0.0f)
+,   m_shaft_angle_target(0.0f)
+,   m_voltage()
+,   m_voltage_prev()
+,   m_amperage()
+,   m_amperage_prev()
+,   m_voltage_bemf(0)
+,   m_voltage_sensor_align(power_supply_voltage)
+,   m_velocity_index_search(DEF_INDEX_SEARCH_TARGET_VELOCITY)
+
+,   m_voltage_limit(voltage_limit)
+,   m_current_limit(DEF_CURRENT_LIM)
+,   m_velocity_limit(DEF_VEL_LIM)     //   maximum angular velocity to be used for positioning
+,   m_enabled(false)
+,   m_motor_status(FOC_MOTOR_STATUS::UNINITIALIZED)
+,   m_foc_modulation(FOC_MODULATION_TYPE::SINE_PWM)
+,   m_modulation_centered(1)          //!< flag (1) centered modulation around driver limit /2  or  (0) pulled to 0
+
+,   m_torque_controller(TORQUE_CONTROL_TYPE::VOLTAGE)
+,   m_controller(MOTION_CONTROL_TYPE::OL_VELOCITY)  //  TORQUE) //OL_VELOCITY  CL_VELOCITY
+
+,   m_PID_amperage_q( DEF_PID_CURR_P,
+                      DEF_PID_CURR_I,
+                      DEF_PID_CURR_D,
+                      DEF_PID_CURR_RAMP, 
+                      DEF_POWER_SUPPLY)
+                      
+,   m_PID_amperage_d( DEF_PID_CURR_P,
+                      DEF_PID_CURR_I,
+                      DEF_PID_CURR_D,
+                      DEF_PID_CURR_RAMP, 
+                      DEF_POWER_SUPPLY)
+                      
+,   m_PID_velocity(   DEF_PID_VEL_P,
+                      DEF_PID_VEL_I,
+                      DEF_PID_VEL_D,
+                      DEF_PID_VEL_RAMP,
+                      DEF_PID_VEL_LIMIT)
+                      
+,   m_PID_angle(      DEF_P_ANGLE_P,
+                      0,
+                      0,
+                      0,
+                      DEF_VEL_LIM)
+
+,   m_LPF_current_q(  DEF_CURR_FILTER_Tf)
+,   m_LPF_current_d(  DEF_CURR_FILTER_Tf)
+,   m_LPF_velocity(   DEF_VEL_FILTER_Tf)
+,   m_LPF_angle(      DEF_VEL_FILTER_Tf)                              // TODO: refactor argument value and name of const
+
+,   m_motion_downsample(DEF_MOTION_DOWNSMAPLE)
+,   m_motion_cnt(0)
+,   m_sensor_offset(0.0f)
+,   m_zero_electric_angle(NOT_SET)
+,   m_sensor_direction(Direction::UNKNOWN)               //!< default is CW. if sensor_direction == Direction::CCW then direction will be flipped compared to CW. Set to UNKNOWN to set by calibration
+// TODO: move to another class
+,   m_monitor_downsample(DEF_MON_DOWNSMAPLE)
+,   m_monitor_start_char('\0')
+,   m_monitor_end_char('\0')
+,   m_monitor_separator('\t')
+,   m_monitor_decimals(4)
+,   monitor_variables(_MON_TARGET | _MON_VOLT_Q | _MON_VEL | _MON_ANGLE)
+//
+,   m_p_current_sense(nullptr)
+
+{
+    return;
+}
+
+//-----------------------------------------------------------------------------
+//                               init
+//-----------------------------------------------------------------------------
+void StepperMotor::init() 
+{    
+    m_motor_status       = FOC_MOTOR_STATUS::INITIALIZING;
+
+    // TODO PID
+   // m_PID_velocity.limit = (PHASE_RESISTANCE > 0.0f)
+    //                     ? m_current_limit
+     //                    : m_voltage_limit;
+
+   // m_PID_angle.limit      = m_velocity_limit;
+
+    // if using open loop control, set a CW as the default direction if not already set
+    if (  (  m_controller == MOTION_CONTROL_TYPE::OL_ANGLE
+             ||
+		     m_controller == MOTION_CONTROL_TYPE::OL_VELOCITY
+		  )
+          &&
+		  (m_sensor_direction == Direction::UNKNOWN))
+    {
+        m_sensor_direction = Direction::CW;
+    }
+
+    HAL_Delay(500);
+    enable();   // enable motor
+    HAL_Delay(500);
+
+    m_motor_status = FOC_MOTOR_STATUS::UNCALIBRATED;
+}
+
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void StepperMotor::disable()
+{
+  m_driver.disable();
+  
+  m_enabled = false;
+}
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void StepperMotor::enable()
+{
+  m_driver.enable();
+
+  m_enabled = true;
+}
+
+//-----------------------------------------------------------------------------
+//                                initFOC
+//
+// return true on success
+//-----------------------------------------------------------------------------
+bool  StepperMotor::initFOC() 
+{
+    init(); // TODO: should this be 'reset'?
+
+    bool success(true);
+
+
+    m_sensor.get_diagnostic(); // dummy read
+  
+    m_motor_status = FOC_MOTOR_STATUS::UNCALIBRATED;
+
+    // align motor if necessary
+    // alignment necessary for encoders!
+    // sensor and motor alignment - can be skipped
+    // by setting motor.sensor_direction and motor.zero_electric_angle
+    HAL_Delay(500);
+
+    success &= alignSensor(); // bitwise intentional
+
+    m_sensor.update();
+    m_shaft_angle = m_sensor.get_angle_radians();
+
+    if(success)
+    {
+    	m_motor_status = FOC_MOTOR_STATUS::READY;
+    }
+    else
+    {
+    	m_motor_status = FOC_MOTOR_STATUS::CALIBRATION_FAILED;
+        disable();
+    }
+
+    return success;
+}
+
+//-----------------------------------------------------------------------------
+//                            alignSensor
+//
+// Encoder alignment to electrical 0 angle
+//
+// return true on success
+//-----------------------------------------------------------------------------
+bool StepperMotor::alignSensor()
+{
+  const uint32_t TWO_MILLISECONDS(2);
+  bool success(true);
+
+  if(Direction::UNKNOWN == m_sensor_direction)
+  {
+   // if(needsSearch()) // TODO: need a clearer func name
+    {
+        success = absoluteZeroSearch();
+    }
+    
+    // exit if index not found
+    if(!success)
+    {
+        return success;
+    }
+    
+    // find natural direction
+    // move one electrical revolution forward
+    // ramp up from 1.5Pi to 3.5Pi
+    float electric_angle;
+
+    // This should result in the motor spinning
+    for (int i = 0; i <=500; i++ )
+    {
+
+        //char  buff[128];
+        //sprintf(buff, "INC: %d\r\n", i);
+        //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+
+
+        electric_angle = THREE_HALVES_PI + TWO_PI * i / 500.0f;
+      
+        setPhaseVoltage(m_voltage_sensor_align, 0.0f,  electric_angle);
+
+        m_sensor.update();
+
+	    HAL_Delay(TWO_MILLISECONDS);
+
+        m_sensor.update();        
+    }
+    
+    // take and angle in the middle
+    m_sensor.update();
+    
+    float mid_angle = m_sensor.get_angle_radians(); //m_shaft_angle; 
+    
+    // move one electrical revolution backwards
+    // ramp down from 3.5Pi to 1.5Pi
+    for (int i = 500; i >=0; i-- ) 
+    {
+
+        //char  buff[128];
+        //sprintf(buff, "DEC: %d\r\n", i);
+        //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+    
+        electric_angle = THREE_HALVES_PI + TWO_PI * i / 500.0f ;
+        setPhaseVoltage(m_voltage_sensor_align, 0.0f,  electric_angle);
+        
+	    m_sensor.update();
+
+	    HAL_Delay(TWO_MILLISECONDS);
+
+        m_sensor.update();
+    }
+    
+    m_sensor.update(); // TODO: shouldn't this be after setPhaseVoltage?
+    
+    float end_angle = m_sensor.get_angle_radians(); //m_shaft_angle; 
+    
+    setPhaseVoltage(0, 0, 0);                     // <---explain
+
+    HAL_Delay(200);
+    
+    setPhaseVoltage(0.0f, 0.0f,  electric_angle); // <--explain THREE_HALVES_PI?
+    HAL_Delay(TWO_MILLISECONDS);
+
+    // determine the direction the sensor moved
+    if (mid_angle == end_angle)
+    {
+      return 0; // failed calibration
+    }
+    else
+    if (mid_angle < end_angle)
+    {
+        m_sensor_direction = Direction::CCW;
+    }
+    else
+    {
+        m_sensor_direction = Direction::CW;
+    }
+
+    
+    float electrical_radians = 
+          mechanical_to_electrical_radians(fabs(mid_angle - end_angle));
+    
+    if( fabs(electrical_radians - TWO_PI) > 0.5f )
+    { 
+        // 0.5f is arbitrary number it can be lower or higher!
+    }
+  }
+
+
+  // zero electric angle not known
+  if(NOT_SET == m_zero_electric_angle)
+  {
+      // align the electrical phases of the motor and sensor
+      // set angle -90(270 = 3PI/2) degrees
+      setPhaseVoltage(m_voltage_sensor_align, 0,  THREE_HALVES_PI);
+
+      HAL_Delay(700);
+
+      m_sensor.update();
+      
+      // get the m_amperage zero electric angle
+      m_zero_electric_angle = get_electric_angle_radians();
+
+
+      m_sensor_offset = m_zero_electric_angle; // TODO: Added but Not sure about this
+
+
+
+      char  buff[128];
+      sprintf(buff, "Zero Electric Angle: %ld\r\n", static_cast<uint32_t>(1000*m_zero_electric_angle));
+      HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+      
+      HAL_Delay(20);
+
+      // stop everything
+      setPhaseVoltage(0.0f, 00.0f, 0.0f);
+
+      HAL_Delay(200);
+  }
+  
+  return success;
+}
+
+//-----------------------------------------------------------------------------
+//                          absoluteZeroSearch
+//
+// Encoder alignment the absolute zero angle - to the index
+//
+// return true if search is complete
+//-----------------------------------------------------------------------------
+bool StepperMotor::absoluteZeroSearch()
+{
+    // Push limits
+    float limit_vel    = m_velocity_limit;
+    float limit_volt   = m_voltage_limit;
+    
+    m_velocity_limit   = m_velocity_index_search;
+    m_voltage_limit    = m_voltage_sensor_align;
+    
+    // search the absolute zero with small velocity  
+    m_shaft_angle      = 0.0f;
+    
+    while(needsSearch() && m_shaft_angle < TWO_PI)
+    {
+      angleOpenloop(THREE_PI);
+      
+      // update is important for some sensors not to loose count
+      // not needed for the search
+      m_sensor.update();
+    }
+    
+    // disable motor
+    setPhaseVoltage(0.0f, 0.0f, 0.0f); // TODO: refactor name
+    
+    // Pop limits
+    m_velocity_limit = limit_vel;
+    m_voltage_limit  = limit_volt;
+
+    return !needsSearch();
+}
+
+
+//-----------------------------------------------------------------------------
+//                               loopFOC
+//
+// Iterative function looping FOC algorithm, setting Uq on the Motor
+// The faster it can be run the better
+//-----------------------------------------------------------------------------
+void StepperMotor::loopFOC() 
+{
+    const uint32_t TWO_MILLISECOND(2);
+
+    const uint32_t MICROSECONDS_PER_SECOND( 1e-6f); // TODO move to class level
+    
+    unsigned long now_us = _micros();
+    
+    float delta_t           = (now_us - m_target_prev_timestamp)
+                            * MICROSECONDS_PER_SECOND;
+    
+    m_target_prev_timestamp = now_us;
+    
+    m_sensor.update();
+
+    m_shaft_angle = m_sensor.get_angle_radians();
+    m_shaft_angle = adjust_shaft_angle_radians(m_shaft_angle);  
+
+    
+    //char buff[50];
+   // sprintf(buff, "res:%ld\r\n", static_cast<uint32_t>(1000.0f *m_shaft_angle));
+    //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+
+    // Needs the update() to be called first
+    // This function will not have numerical issues because it uses Sensor::getMechanicalAngle() 
+    // which is in range 0-2PI
+  //  m_electrical_angle = get_electric_angle_radians(); // TODO: check this
+
+
+    switch (m_controller) 
+      {
+        case MOTION_CONTROL_TYPE::TORQUE:
+                         
+             break;             
+        
+        case MOTION_CONTROL_TYPE::CL_ANGLE:
+             
+             cl_set_dq_voltage_angle(m_target, delta_t);
+    
+             break;
+             
+             
+        case MOTION_CONTROL_TYPE::CL_VELOCITY:
+    
+             cl_set_dq_voltage_omega(m_target,  delta_t);
+                                  
+             break;
+             
+        case MOTION_CONTROL_TYPE::OL_VELOCITY:
+
+             ol_set_dq_voltage_omega(m_target,  delta_t);
+
+             break;
+        
+        case MOTION_CONTROL_TYPE::OL_ANGLE:
+    
+             ol_set_dq_voltage_angle(m_target,  delta_t);
+             
+             break;
+    
+        default:
+             ; // NOP
+    }
+
+}
+
+//-----------------------------------------------------------------------------
+//                             move
+//
+// Iterative function running outer loop of the FOC algorithm
+// Behavior of this function is determined by the motor.controller variable
+// It runs either angle, velocity or voltage loop
+// - needs to be called iteratively it is asynchronous function
+// - if target is not set it uses motor.target value
+// 
+// voltage and current elements are in quatrature/Direct coordinate system
+//-----------------------------------------------------------------------------
+void StepperMotor::move(float new_target) 
+{
+    const uint32_t MICROSECONDS_PER_SECOND( 1e-6f); // TODO move to class level
+    
+    unsigned long now_us = _micros();
+    
+    float delta_t           = (now_us - m_target_prev_timestamp)
+                            * MICROSECONDS_PER_SECOND;
+    float delta_target      = new_target - m_target_prev;
+    m_target_prev           = new_target;
+    m_target_prev_timestamp = now_us;
+    
+
+    // downsampling (optional)
+    if(m_motion_cnt++ < m_motion_downsample)
+    {
+        return;
+    }
+    
+    m_motion_cnt = 0;
+
+    // shaft angle/velocity need the update() to be called first
+    // get shaft angle
+    // TODO sensor precision: the shaft_angle actually stores the complete position, 
+    //                        including full rotations, as a float. For this 
+    //                        reason it is NOT precise when the angles become large.
+    //                        Additionally, the way LPF works on angle is a precision 
+    //                        issue, and the angle-LPF is a problem
+    //                        when switching to a 2-component representation.
+
+    // Why would this update be conditional
+    // m_omega_mechanical_rps is needed for current.d
+    //
+    //if(  m_controller!=MOTION_CONTROL_TYPE::ANGLE_OPEN_LOOP
+     //    && 
+     //    m_controller!=MOTION_CONTROL_TYPE::VELOCITY_OPEN_LOOP
+    //  ) 
+    if(true)  
+    {
+        // read value even if motor iif not in openloop mode
+        m_sensor.update();
+        m_shaft_angle = m_sensor.get_angle_radians();
+        m_shaft_angle = adjust_shaft_angle_radians(m_shaft_angle); 
+    }
+
+    m_omega_mechanical_rps = shaft_radians_per_second();
+    //m_omega_electrical_rps = m_omega_mechanical_rps * NUM_POLE_PAIRS;
+
+
+    if(!m_enabled)
+    {
+       return;
+    }
+
+    // set internal m_target variable
+    if(NOT_SET != new_target ) 
+    {
+        m_target = new_target;
+    }
+
+    // calculate back-emf m_voltage if KV_rating available U_bemf = vel*(1/KV)
+    if (NOT_SET != KV_RPM_PER_VOLT)
+    {
+        float rpm = m_omega_mechanical_rps * RAD_PER_SEC_TO_REV_PER_MIN;
+        m_voltage_bemf = rpm/KV_RPM_PER_VOLT;
+    }
+
+    // estimate motor m_amperage if phase resistance available and 
+    // current_sense not available
+    if(!m_p_current_sense && (PHASE_RESISTANCE > 0.0f))
+    {
+        // Ohm's law
+        // m_amperage appears to be set but not used
+        m_amperage.q = (m_voltage.q - m_voltage_bemf)/PHASE_RESISTANCE;
+    }
+
+    // choose control loop
+    switch (m_controller) 
+    {
+      case MOTION_CONTROL_TYPE::TORQUE:
+
+           // In this context, the new_target has units of volts
+           // The quadrature voltage controls the torque
+
+           set_dq_voltage_torque(new_target, delta_t, delta_target);
+                       
+           break;
+           
+      
+      case MOTION_CONTROL_TYPE::CL_ANGLE:
+
+           m_target = new_target * NUM_POLE_PAIRS;       
+
+           break;
+           
+           
+      case MOTION_CONTROL_TYPE::CL_VELOCITY:
+
+           m_target = new_target  * NUM_POLE_PAIRS;    
+                                
+           break;
+           
+      case MOTION_CONTROL_TYPE::OL_VELOCITY:
+           
+           m_target = new_target  * NUM_POLE_PAIRS;  
+  
+           break;
+           
+      case MOTION_CONTROL_TYPE::OL_ANGLE:
+
+           m_target = new_target  * NUM_POLE_PAIRS;  
+
+          
+           
+           break;
+
+      default:
+           ; // NOP
+  }
+}
+
+void StepperMotor::set_dq_voltage_torque(float target_quadrature_voltage, float delta_t, float delta_target)
+{
+    //    I_qref = T_ref / K_t
+    
+      
+      //  voltage_d = phase_resistance * current_q
+      //              + phase_inductance * delta_current_q/delta_t
+      //              + omega * (phase_inductance * current_d + V_emf)
+      //
+      // IF current_d = 0 current_q = target 
+      //
+      //  voltage_d = target * phase_resistance
+      //              + phase_inductance * delta_target/delta_t
+      //              + m_omega_electrical_rps * m_voltage_bemf
+      
+ #if 1
+      float voltage_q(target_quadrature_voltage);  // Amps--> volts? just disable if no phase resistances 
+      
+      // divide by zero gaurd
+      float delta_I_d = (fabs(delta_t) > 0.0f)
+                      ? delta_target/delta_t
+                      : 0.0f;
+
+      // TODO: fetch a fresh mech rps
+      float electrical_rps = mechanical_to_electrical_radians(m_omega_mechanical_rps);
+                      
+      voltage_q =  target_quadrature_voltage * PHASE_RESISTANCE 
+                +  PHASE_INDUCTANCE * delta_I_d
+                +  electrical_rps * m_voltage_bemf;
+      
+    
+ #else
+      // original formula
+      float voltage_q = (PHASE_RESISTANCE > 0.0f)
+                      ? m_target * PHASE_RESISTANCE + m_voltage_bemf
+                      : m_target;                              // Amperes
+ #endif
+     m_voltage.q = symetric_clamp( voltage_q, 
+                                   m_voltage_limit);
+     
+     // set d-component (lag compensation if known inductance)
+     float voltage_d(0.0f);
+     
+     if(PHASE_INDUCTANCE > 0.0f)
+     {
+        // Assume current_d = 0
+        // current_q comes from the pid this is the target and affects torque
+        //
+        //  voltage_d =  phase_resistance * target_Current_d
+        //            +  phase_inductance * delta_current_d/delta_t
+        //            -  omega * phase_inductance * current_q
+        //
+        // with current_d = 0, then delta_current_d/delta_t = 0
+        // current_q = target
+        //
+        //  voltage_d =  -  omega * phase_inductance * target
+    
+        
+    
+         voltage_d =  -PHASE_INDUCTANCE
+                   *   mechanical_to_electrical_radians(m_omega_mechanical_rps)
+                   *   m_target;                                // Amperes
+                
+     }
+    
+    
+    
+      m_voltage.d = symetric_clamp( voltage_d, 
+                                    m_voltage_limit);
+
+
+     setPhaseVoltage(m_voltage.q, m_voltage.d, get_electric_angle_radians());
+
+}
+
+
+void StepperMotor::cl_set_dq_voltage_omega(float target_mechanical_rps, float delta_t)
+{
+#if 0
+
+
+                //    char buff[50];
+                 //  sprintf(buff, "res:%ld\r\n", static_cast<uint32_t>(1000.0f *shaft_radians_per_second()));
+                //    HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+
+
+                   float omega_err     = target_electrical_radians_per_second 
+                                       - shaft_radians_per_second();               // TODO make sure this is electrical
+                   
+                   float voltage_pid   = m_PID_velocity.update(omega_err); 
+                   
+                   
+                   float amperage_d_dot(0.0f);
+                   float amperage_q_dot(0.0f);
+
+                   if(delta_t > 0.0f)
+                   {
+                       amperage_d_dot = (m_amperage.d - m_amperage_prev.d)/delta_t;
+                       amperage_q_dot = (m_amperage.q - m_amperage_prev.q)/delta_t;
+                   }
+                   
+                   // Flux linkages have units of volt seconds
+                   float mag_flux_linkage_d            = PHASE_INDUCTANCE * m_amperage.d;
+                   float mag_flux_linkage_q            = PHASE_INDUCTANCE * m_amperage.q;
+                   float perm_magnet_flux_linkage      =  0.171f;                          // move to Ctor
+                   
+                   float resistive_voltage_drop_d_axis = PHASE_RESISTANCE * m_amperage.d;
+                   float resistive_voltage_drop_q_axis = PHASE_RESISTANCE * m_amperage.q;
+                   
+                   float inductive_voltage_drop_d_axis = PHASE_INDUCTANCE * amperage_d_dot;
+                   float inductive_voltage_drop_q_axis = PHASE_INDUCTANCE * amperage_q_dot;
+                   
+                   //float back_emf_d_axis = m_omega_mechanical_rps * mag_flux_linkage_d;
+                   float back_emf_d_axis = m_omega_mechanical_rps 
+                                         * (mag_flux_linkage_d + perm_magnet_flux_linkage);
+
+                   
+                   float back_emf_q_axis = m_omega_mechanical_rps 
+                                         * (mag_flux_linkage_q + perm_magnet_flux_linkage);
+                   
+                   // -m_current_sp * m_omega_mechanical_rps * NUM_POLE_PAIRS * PHASE_INDUCTANCE;
+                   //  -m_current_sp * m_omega_electrical_rps * PHASE_INDUCTANCE;
+                   // - mag_flux_linkage_d * m_omega_electrical_rps
+                   m_voltage.d         = resistive_voltage_drop_d_axis 
+                                       + inductive_voltage_drop_d_axis
+                                       - back_emf_d_axis;
+                   
+                   // m_current_sp * PHASE_RESISTANCE + m_voltage_bemf;
+                   // resistive_voltage_drop_q_axis + back_emf_q_axis
+                   m_voltage.q         = resistive_voltage_drop_q_axis
+                                       + inductive_voltage_drop_q_axis     // <-- ignored
+                                       + back_emf_q_axis
+                                       + voltage_pid;                      // didn't factor in here
+                   
+                   m_voltage.d = symetric_clamp( m_voltage.d, m_voltage_limit);
+                   m_voltage.q = symetric_clamp( m_voltage.q, m_voltage_limit);
+    
+    
+                   m_amperage.d = m_amperage_prev.d 
+                               + ( m_voltage.d -  m_voltage_prev.d ) * delta_t * PHASE_INDUCTANCE_INVERSE;
+                   
+                   m_amperage.q = m_amperage_prev.q 
+                               + ( m_voltage.q -  m_voltage_prev.q ) * delta_t * PHASE_INDUCTANCE_INVERSE;
+    
+                                 
+                   // update state variables                   
+                   m_amperage_prev.d = m_amperage.d;
+                   m_amperage_prev.q = m_amperage.q;
+                   m_voltage_prev.d  = m_voltage.d;
+                   m_voltage_prev.q  = m_voltage.q;
+#else
+               
+                   float angular_velocity_error(target_mechanical_rps - shaft_radians_per_second());
+    
+                   float m_current_sp = m_PID_velocity.update(angular_velocity_error); 
+
+                   float electrical_rps           = mechanical_to_electrical_radians(target_mechanical_rps);
+                   float mag_flux_linkage_q       = PHASE_INDUCTANCE * m_amperage.q;
+                   float perm_magnet_flux_linkage =  0.171f;
+                   float back_emf_q_axis          = electrical_rps 
+                                                  * (mag_flux_linkage_q + perm_magnet_flux_linkage);
+
+                   
+    
+                   m_voltage.q =  m_current_sp * PHASE_RESISTANCE + back_emf_q_axis;
+                   m_voltage.d = -m_current_sp * PHASE_INDUCTANCE * electrical_rps;
+                              
+                   m_voltage.q = symetric_clamp( m_voltage.q, m_voltage_limit);
+                   m_voltage.d = symetric_clamp( m_voltage.d, m_voltage_limit);
+    
+#endif
+
+
+   // setPhaseVoltage(m_voltage.q, m_voltage.d, norm_elec_angle);
+    setPhaseVoltage(m_voltage.q, m_voltage.d, get_electric_angle_radians());
+
+
+}
+
+// TODO: need to update in loopFOC
+// let move simply set the target
+void StepperMotor::cl_set_dq_voltage_angle(float target_angle_radians, float delta_t)
+{  
+    float target_electrical_radians = mechanical_to_electrical_radians(target_angle_radians);
+    float current_electrical_radians = mechanical_to_electrical_radians(m_shaft_angle);       // TODO:get_electric_angle_radians()?
+
+    float angular_error = target_electrical_radians - current_electrical_radians; // TODO: make sure this is electrical
+
+    float v_pid = m_PID_angle.update(angular_error);
+
+    float amperage_d_dot(0.0f);
+    float amperage_q_dot(0.0f);
+
+    if(delta_t > 0.0f)
+    {
+        amperage_d_dot = (m_amperage.d - m_amperage_prev.d)/delta_t;
+        amperage_q_dot = (m_amperage.q - m_amperage_prev.q)/delta_t;
+    }
+
+
+    // Flux linkages have units of volt seconds
+    float mag_flux_linkage_d = PHASE_INDUCTANCE * m_amperage.d;
+    float mag_flux_linkage_q = PHASE_INDUCTANCE * m_amperage.q;
+    float perm_magnet_flux_linkage =  0.171f;                          // move to Ctor
+
+
+    float resistive_voltage_drop_d_axis = PHASE_RESISTANCE * m_amperage.d;
+    float resistive_voltage_drop_q_axis = PHASE_RESISTANCE * m_amperage.q;
+
+
+    float inductive_voltage_drop_d_axis = PHASE_INDUCTANCE * amperage_d_dot;
+    float inductive_voltage_drop_q_axis = PHASE_INDUCTANCE * amperage_q_dot;
+
+    float electrical_rps = mechanical_to_electrical_radians(m_omega_mechanical_rps);
+    float back_emf_d_axis = electrical_rps * mag_flux_linkage_d;
+    float back_emf_q_axis = electrical_rps 
+                          * (mag_flux_linkage_q + perm_magnet_flux_linkage);
+
+
+
+#if 0    
+    
+    m_shaft_velocity_target = m_feed_forward_velocity          // TODO: refactor algorithm selection
+                            + m_PID_angle.update( angular_error);       // TODO: refactor PID
+    
+    m_shaft_angle_target    = symetric_clamp( m_shaft_angle_target, 
+                                              m_velocity_limit);
+    
+    // calculate the torque command
+    
+    float angular_velocity_error = m_shaft_velocity_target 
+                                 - m_omega_mechanical_rps;
+    
+    m_current_sp = m_PID_velocity.update(angular_velocity_error);     // TODO: refactor PID
+    
+    //  float voltage_d =  -PHASE_INDUCTANCE
+    //                  *   m_omega_mechanical_rps*NUM_POLE_PAIRS
+    //                  *   m_current_sp;
+    //  m_voltage.q = (m_current_sp * PHASE_RESISTANCE) + m_voltage_bemf
+
+#endif    
+    
+    float voltage_d = resistive_voltage_drop_d_axis
+                    + inductive_voltage_drop_d_axis
+                    - back_emf_d_axis;
+    
+
+     float voltage_q = resistive_voltage_drop_q_axis
+                    + inductive_voltage_drop_q_axis
+                    - back_emf_q_axis
+                    + v_pid;
+
+
+     m_voltage.d = symetric_clamp( voltage_d, m_voltage_limit);   
+     m_voltage.q = symetric_clamp( voltage_q, m_voltage_limit);
+
+
+     m_amperage.d = m_amperage_prev.d 
+                 + ( m_voltage.d -  m_voltage_prev.d ) * delta_t * PHASE_INDUCTANCE_INVERSE;
+     
+     m_amperage.q = m_amperage_prev.q 
+                 + ( m_voltage.q -  m_voltage_prev.q ) * delta_t * PHASE_INDUCTANCE_INVERSE;
+     
+
+     //setPhaseVoltage(m_voltage.q, m_voltage.d, target_omega_electrical_rps);     
+
+     
+    // update state variables                   
+    m_amperage_prev.d = m_amperage.d;
+    m_amperage_prev.q = m_amperage.q;
+    m_voltage_prev.d  = m_voltage.d;
+    m_voltage_prev.q  = m_voltage.q;
+
+    
+    setPhaseVoltage(m_voltage.q, m_voltage.d, get_electric_angle_radians());
+
+}
+
+void StepperMotor::ol_set_dq_voltage_angle(float target_mechanical_radians, float delta_t)
+{    
+    const float MAX_RESISTIVE_VOLTAGE_DROP(m_current_limit*PHASE_RESISTANCE);
+
+    // quick fix for strange cases (micros overflow + timestamp not defined)
+    if(delta_t <= 0 || delta_t > 0.5f)
+    {
+      delta_t = 1e-3f;
+    }
+
+    // calculate the necessary angle to move from m_amperage position towards 
+    // m_target angle with maximal velocity (m_velocity_limit)
+
+    // Note: m_velocity_limit may have been modified by absoluteZeroSearch()
+  
+   // float target_electrical_radians = mechanical_to_electrical_radians(target_mechanical_radians);
+    float shaft_angle(m_sensor.get_angle_radians());
+    float target_angle_error(   target_mechanical_radians -  shaft_angle);  // TODO: make sure this is electrical
+    float max_angular_change(     m_velocity_limit * delta_t    );
+  
+    if( abs( target_angle_error ) > abs( max_angular_change ))
+    {
+      shaft_angle += _sign(target_angle_error) * max_angular_change;
+    
+   //   m_omega_mechanical_rps = m_velocity_limit;       
+    }
+    else
+    {
+      shaft_angle          = target_mechanical_radians;
+   //   m_omega_mechanical_rps = 0;   
+    }
+
+    shaft_angle -= m_zero_electric_angle;
+
+
+    m_voltage.d = 0; // TODO d-component lag-compensation 
+     
+
+    float voltage_q  = MAX_RESISTIVE_VOLTAGE_DROP + fabs(m_voltage_bemf);
+    m_voltage.q = symetric_clamp(voltage_q, m_voltage_limit);
+ 
+    m_amperage.q = (m_voltage.q  - fabs(m_voltage_bemf))/PHASE_RESISTANCE;
+
+    float raw_elec_angle(mechanical_to_electrical_radians(shaft_angle));
+    float norm_elec_angle(normalize_radians(raw_elec_angle));
+  
+    setPhaseVoltage(m_voltage.q, m_voltage.d, norm_elec_angle);
+
+    return;
+}
+
+void StepperMotor::ol_set_dq_voltage_omega(float target_mechanical_rps, float delta_t)
+{
+    // voltage_d = phase_resistance * current_d
+    //           - phase_inductance * delta_current_d/delta_t
+    //           - omega_electrical * phase_inductance * current_q
+    //
+    // voltage_q = phase_resistance * current_q
+    //           - phase_inductance * delta_current_q/delta_t
+    //           + omega_electrical * phase_inductance * current_d
+    //           + K_e * omega_electrical
+    //
+    // Typically, voltage_d is set to zero to maximize the torque per unit current (current_d)
+    // which makes voltage_q the primary control variable.
+    //
+    // Set voltage_d to zero.
+    // ignore delta_current_q/delta_t.
+
+#if 0
+    
+    if(!(fabs(m_voltage_bemf) > 0.0))
+    {
+          m_amperage.q = 0.5f;
+    }
+    
+    float desired_current_q = 0.75f;
+    float desired_voltage_q = desired_current_q * PHASE_RESISTANCE;
+
+    float raw_shaft_angle = m_sensor.get_angle_radians() 
+                          + target_mechanical_rps * delta_t
+                          -m_zero_electric_angle;
+    
+    float raw_elec_angle  = mechanical_to_electrical_radians(raw_shaft_angle);
+    float norm_elec_angle = normalize_radians(raw_elec_angle);
+                    
+               
+    float predicted_voltage_q = desired_voltage_q
+                              + m_voltage_bemf ; //* target_electrical_radians_per_second;
+    
+    m_voltage.q = symetric_clamp(predicted_voltage_q, m_voltage_limit);        
+    m_voltage.d = 0.0f;
+    
+    m_amperage.q = (m_voltage.q  - fabs(m_voltage_bemf))/PHASE_RESISTANCE;
+       
+    setPhaseVoltage(m_voltage.q, m_voltage.d, norm_elec_angle);
+#else
+
+    float amperage_d_dot(0.0f);
+    float amperage_q_dot(0.0f);
+    
+    if(delta_t > 0.0f)
+    {
+        amperage_d_dot = (m_amperage.d - m_amperage_prev.d)/delta_t;
+        amperage_q_dot = (m_amperage.q - m_amperage_prev.q)/delta_t;
+    }
+
+    // Flux linkages have units of volt seconds
+    float mag_flux_linkage_d            = PHASE_INDUCTANCE * m_amperage.d;
+    float mag_flux_linkage_q            = PHASE_INDUCTANCE * m_amperage.q;
+    float perm_magnet_flux_linkage      =  0.171f;                          // move to Ctor
+
+
+
+    float resistive_voltage_drop_d_axis = PHASE_RESISTANCE * m_amperage.d;
+    float resistive_voltage_drop_q_axis = PHASE_RESISTANCE * m_amperage.q;
+    
+    float inductive_voltage_drop_d_axis = PHASE_INDUCTANCE * amperage_d_dot;
+    float inductive_voltage_drop_q_axis = PHASE_INDUCTANCE * amperage_q_dot;
+    
+    //float back_emf_d_axis = m_omega_mechanical_rps * mag_flux_linkage_d;
+    //float inductive_voltage_drop_d_axis = m_omega_mechanical_rps
+    //                      * (mag_flux_linkage_d + perm_magnet_flux_linkage);
+    
+    
+    float back_emf_q_axis = m_omega_mechanical_rps 
+                          * (mag_flux_linkage_q + perm_magnet_flux_linkage);
+
+    float back_emf_d_axis = m_omega_mechanical_rps 
+                          * (mag_flux_linkage_d + perm_magnet_flux_linkage);
+
+
+    float voltage_alpha = resistive_voltage_drop_d_axis
+                        + inductive_voltage_drop_d_axis
+                        - back_emf_d_axis * _sin(mechanical_to_electrical_radians(m_sensor.get_angle_radians()));
+
+    float voltage_beta  = resistive_voltage_drop_q_axis
+                        + inductive_voltage_drop_q_axis
+                        + back_emf_d_axis * _cos(mechanical_to_electrical_radians(m_sensor.get_angle_radians()));
+
+    m_driver.set_pwm_duty_cycle( voltage_alpha,
+                                 voltage_beta
+                               );
+    
+    m_amperage_prev.d = m_amperage.d;
+    m_amperage_prev.q = m_amperage.q;
+    //m_voltage_prev.d  = m_voltage.d;
+    //m_voltage_prev.q  = m_voltage.q;
+
+
+#endif
+    return;
+}
+
+//-----------------------------------------------------------------------------
+//                        compute_inverse_park_transform
+//
+// Function uses sine approximation
+//    regular  sin +  cos ~300us    (no memory usaage)
+//    approx  _sin + _cos ~110us    (400Byte ~ 20% of memory)
+//
+//! @param Uq
+//! @param Ud
+//! @param electric_angle
+//-----------------------------------------------------------------------------
+#include <cmath>
+void sincos(float a, float* s, float* c)
+{
+  *s = sinf(a);
+  *c = cosf(a);
+}
+
+void StepperMotor::
+compute_inverse_park_transform( 
+                                float Uq, 
+                                float Ud, 
+                                float electric_angle)
+{
+    // Sinusoidal PWM modulation
+    // Inverse Park transformation
+    float _sa;
+    float _ca;
+    _sincos(electric_angle, &_sa, &_ca);
+    //sincos(electric_angle, &_sa, &_ca);
+    
+    // Inverse park transform
+    m_U_alpha =  _ca * Ud - _sa * Uq;  // -sin(angle) * Uq;
+    m_U_beta  =  _sa * Ud + _ca * Uq;  //  cos(angle) * Uq;
+    
+    //m_U_alpha = -sinf(electric_angle) * Uq;
+    //m_U_beta  =  cosf(electric_angle) * Uq;
+    return;
+}
+
+
+//-----------------------------------------------------------------------------
+//                         setPhaseVoltage
+//
+// Method using FOC to set Uq and Ud to the motor at the optimal angle
+// 
+// Function implementing Sine PWM algorithms
+// - space vector not implemented yet
+//
+// Function uses sine approximation
+//    regular  sin +  cos ~300us    (no memory usaage)
+//    approx  _sin + _cos ~110us    (400Byte ~ 20% of memory)
+//
+//! @param Uq
+//! @param Ud
+//! @param angle_el
+//-----------------------------------------------------------------------------
+void StepperMotor::
+setPhaseVoltage(float Uq, float Ud, float electric_angle) 
+{
+
+
+  if(m_enabled)
+  {
+  compute_inverse_park_transform( Uq, Ud, electric_angle);
+#if 0
+  char  buff[128];
+  sprintf(buff, "Alfa: %d Beta: %d, Angle: %d\r\n",
+         (int) m_U_alpha*1000,
+         (int) m_U_beta*1000,
+         (int) electric_angle*1000);
+  HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+#endif
+
+  // set the voltages in hardware
+  m_driver.set_pwm_duty_cycle(m_U_alpha, m_U_beta);
+  }
+}
+
+#if 0
+//-----------------------------------------------------------------------------
+//                          velocityOpenloop
+//
+//! @param target_velocity - rad/s
+//
+//! @note: uses m_voltage_limit
+//
+// TODO Magic numbers
+//
+// voltage_q = phase_resistance *current_q
+//           + m_voltage_bemf * omega_electrical
+
+//-----------------------------------------------------------------------------
+float StepperMotor::velocityOpenloop(float target_velocity)
+{
+  const uint32_t MICROSECONDS_PER_SECOND( 1e-6f); // TODO move to class level
+    
+  unsigned long now_us = _micros();
+  
+  float delta_t_us = (now_us - m_prev_open_loop_timestamp_us)
+                   * MICROSECONDS_PER_SECOND;
+  
+  // quick fix for strange cases (micros overflow + timestamp not defined)
+  if( delta_t_us <= 0 || delta_t_us > 0.5f)
+  {
+    delta_t_us = 1e-3f;
+  }
+
+  // calculate the necessary angle to achieve m_target velocity
+  float delta_angle = target_velocity * delta_t_us;
+
+  // This seems like an odd step since we have a position encoder
+  // TODO: replace with sensor update
+  m_shaft_angle     = _normalizeAngle(m_shaft_angle + delta_angle);    // TODO: refactor _normalizeAngle
+  
+  // for display purposes
+  m_omega_mechanical_rps = target_velocity;
+  m_omega_electrical_rps = m_omega_mechanical_rps * m_pole_pairs;
+
+  // use m_voltage limit or m_current limit
+  float Uq = m_voltage_limit;
+  if(NOT_SET != m_phase_resistance)
+  {
+    
+    #if 1
+    Uq = m_phase_resistance * m_current.q
+       + m_omega_electrical_rps * fabs(m_voltage_bemf);
+
+    
+    #else
+    // original
+    Uq = m_current_limit * m_phase_resistance + fabs(m_voltage_bemf);
+     #endif
+     
+    Uq = symetric_clamp(Uq, m_voltage_limit);
+
+    // recalculate the m_current  
+    m_current.q = (Uq - fabs(m_voltage_bemf))/m_phase_resistance;
+
+    
+   
+  }
+
+  // set the maximal allowed m_voltage (voltage_limit) with the necessary angle
+  setPhaseVoltage(Uq,  0, m_omega_electrical_rps);
+
+  // save timestamp for next call
+  m_prev_open_loop_timestamp_us = now_us;
+
+  return Uq;
+}
+#endif
+
+//-----------------------------------------------------------------------------
+//                              angleOpenloop
+//
+// Function (iterative) generating open loop movement towards the target angle
+// - target_angle - rad
+// it uses voltage_limit and m_velocity_limit variables
+//
+// TODO: Remove magic numbers
+//-----------------------------------------------------------------------------
+float StepperMotor::angleOpenloop(float target_angle)
+{
+    // get m_amperage timestamp
+    unsigned long now_us = _micros();
+  
+    // calculate the sample time from last call
+    float timestamp = (now_us - m_prev_open_loop_timestamp_us) * 1e-6f;
+    // quick fix for strange cases (micros overflow + timestamp not defined)
+    if(timestamp <= 0 || timestamp > 0.5f)
+    {
+      timestamp = 1e-3f;
+    }
+
+    // calculate the necessary angle to move from m_amperage position towards 
+    // m_target angle with maximal velocity (m_velocity_limit)
+
+    // Note: m_velocity_limit may have been modified by absoluteZeroSearch()
+  
+  
+    float target_angle_error(   target_angle - m_shaft_angle );
+    float delta_angle_measured(     m_velocity_limit * timestamp    );
+  
+    if( abs( target_angle_error ) > abs( delta_angle_measured ))
+    {
+      m_shaft_angle += _sign(target_angle_error) * (abs( m_velocity_limit ) * timestamp);
+    
+      m_omega_mechanical_rps = m_velocity_limit;       
+     // m_omega_electrical_rps = m_omega_mechanical_rps * NUM_POLE_PAIRS;
+    }
+    else
+    {
+      m_shaft_angle    = target_angle;
+      m_omega_mechanical_rps = 0;   
+    //  m_omega_electrical_rps = 0;
+    }
+
+    // If PHASE_RESISTANCE is set use m_voltage_limit, otherwise use m_current_limit
+    float Uq = m_voltage_limit;
+    if(NOT_SET != PHASE_RESISTANCE)
+    {
+      // in voltage mode
+      // the voltage limit is equal to the current limit * the phase resistance
+      Uq = m_current_limit*PHASE_RESISTANCE + fabs(m_voltage_bemf);
+      Uq = symetric_clamp(Uq, m_voltage_limit);
+ 
+      m_amperage.q = (Uq - fabs(m_voltage_bemf))/PHASE_RESISTANCE;
+    }
+  
+    // set the maximal allowed m_voltage (voltage_limit) with the necessary angle
+    setPhaseVoltage(Uq,  0, _electricalAngle((m_shaft_angle), NUM_POLE_PAIRS));
+
+ 
+    m_prev_open_loop_timestamp_us = now_us;  // save timestamp for next call
+
+    return Uq;
+}
+
+
+
+// cloned from FOCMotor
+
+
+//-----------------------------------------------------------------------------
+//                         adjust_shaft_angle_radians
+//-----------------------------------------------------------------------------
+float StepperMotor::adjust_shaft_angle_radians(float angle_radians)
+{
+    float radians =   angle_radians;  //m_LPF_angle(angle_radians);
+
+    if(Direction::CCW == m_sensor_direction)
+    {
+       radians *= -1.0f;
+    }
+
+    // m_sensor_offset is currently 0
+    return  radians - m_sensor_offset;
+}
+
+//-----------------------------------------------------------------------------
+//                         shaft_radians_per_second
+//-----------------------------------------------------------------------------
+float StepperMotor::shaft_radians_per_second() 
+{
+  float rad_per_sec = m_LPF_velocity(m_sensor.get_radians_per_second());
+  
+  return (Direction::CCW ==m_sensor_direction) ? -rad_per_sec : rad_per_sec;
+}
+
+//-----------------------------------------------------------------------------
+//                        get_phase_angle_radians (electrical)
+//-----------------------------------------------------------------------------
+float StepperMotor::get_electric_angle_radians()
+{
+  float direction  = static_cast<float>(m_sensor_direction);
+  
+  float raw_angle  =  direction * mechanical_to_electrical_radians(m_sensor.get_mechanical_phase_angle_radians()) 
+                   - m_zero_electric_angle;
+    
+  return  normalize_radians( raw_angle );
+}
+
+//==============================
+
+//#include <iostream>
+//#include <cmath>
+
+
+// Constants
+const float PI = 3.14159265358979323846f;
+
+// Motor parameters
+//const double polePairs = 2; // Number of pole pairs
+//const double maxVoltage = 24.0; // Maximum motor voltage (V)
+//const double maxCurrent = 5.0; // Maximum motor current (A)
+
+// Function to align the rotor field
+void StepperMotor::rotorFieldAlignment(double targetPosition) 
+{
+    // Initialize motor and position sensor
+    float currentPosition = 0.0f; // Current rotor position (radians)
+    float voltage         = 0.0f; // Motor voltage (V)
+    
+    // Specify the alignment speed and acceleration
+    float alignmentSpeed        = 2 * PI; // radians per second
+    float alignmentAcceleration = PI;     // radians per second squared
+    
+    // Loop until the target position is reached
+    while (std::abs(currentPosition - targetPosition) > 0.01) 
+    {
+        // Calculate error between current and target position
+        float positionError = targetPosition - currentPosition;
+        
+        // Calculate the required torque (proportional control)
+        float torque = positionError * m_current_limit;
+        
+        // Apply voltage to align the rotor field
+        voltage = torque / (alignmentSpeed * NUM_POLE_PAIRS);
+        
+        // Ensure voltage doesn't exceed the maximum
+        voltage = symetric_clamp(voltage, m_voltage_limit);
+        
+        // Simulate motor response (in a real system, this would control the motor)
+        // Update the current position (this is simplified)
+        //currentPosition += alignmentSpeed * 0.001; // Assuming a 1 ms time step
+       // m_sensor.update();
+        currentPosition = m_sensor.read_angle_radians();
+        
+        // Print current position for demonstration purposes
+        char  buff[128];
+        sprintf(buff, "Current Position: %ld radians\r\n", static_cast<uint32_t>(1000.0f *currentPosition));
+        HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+
+        HAL_Delay(100);
+
+           
+        setPhaseVoltage(voltage, 0.0f, mechanical_to_electrical_radians(currentPosition));
+
+        
+    }
+    
+    // Stop motor (set voltage to zero)
+    voltage = 0.0f;
+    
+    // Print message when alignment is complete
+    char  buff[128];
+    sprintf(buff, "Rotor Field Alignment Complete\r\n");
+    HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
+
+
+    
+}
+
+#if 0
+int main() {
+    // Specify the target position for alignment (in radians)
+    double targetPosition = PI / 4; // Example: Align to 45 degrees
+    
+    // Call the rotorFieldAlignment function to align the rotor field
+    rotorFieldAlignment(targetPosition);
+    
+    return 0;
+}
+#endif
+//==============================
+

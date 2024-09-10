@@ -1,0 +1,7 @@
+
+#ifndef MAIN_CPP_HPP
+#define MAIN_CPP_HPP
+
+extern "C" void cpp_main(void);
+
+#endif

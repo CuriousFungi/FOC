@@ -1,0 +1,13 @@
+../Core/Src/main_cpp.cpp:97:6:void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef*)	1
+../Core/Src/main_cpp.cpp:123:6:void enableCycleCounter()	1
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/stl_deque.h:695:5:void std::_Deque_base<_Tp, _Alloc>::_M_destroy_nodes(_Map_pointer, _Map_pointer) [with _Tp = float; _Alloc = std::allocator<float>]	2
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/stl_deque.h:617:5:std::_Deque_base<_Tp, _Alloc>::~_Deque_base() [with _Tp = float; _Alloc = std::allocator<float>]	2
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/stl_deque.h:1027:7:std::deque<_Tp, _Alloc>::~deque() [with _Tp = float; _Alloc = std::allocator<float>]	1
+../Core/Src/main_cpp.cpp:385:1:void __static_initialization_and_destruction_0(int, int)	5
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/stl_vector.h:1891:7:std::vector<_Tp, _Alloc>::size_type std::vector<_Tp, _Alloc>::_M_check_len(size_type, const char*) const [with _Tp = float; _Alloc = std::allocator<float>]	4
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/new_allocator.h:112:7:_Tp* std::__new_allocator<_Tp>::allocate(size_type, const void*) [with _Tp = float]	1
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/vector.tcc:439:7:) [with _Args = {const float&}; _Tp = float; _Alloc = std::allocator<float>]	5
+C:/ST/STM32CubeIDE_1.16.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623/tools/arm-none-eabi/include/c++/12.3.1/bits/stl_vector.h:1276:7:void std::vector<_Tp, _Alloc>::push_back(const value_type&) [with _Tp = float; _Alloc = std::allocator<float>]	2
+../Core/Src/main_cpp.cpp:181:6:void cpp_main()	9
+../Core/Src/main_cpp.cpp:385:1:cpp)	1
+../Core/Src/main_cpp.cpp:385:1:cpp)	1
