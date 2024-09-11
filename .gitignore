@@ -1,2 +1,14 @@
 
 CM7/Debug/
+
+*.map
+
+*.list
+
+*.elf
+
+*.su
+
+*.o
+
+*.cyclo

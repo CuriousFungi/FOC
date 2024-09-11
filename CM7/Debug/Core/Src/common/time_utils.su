@@ -1,2 +1,0 @@
-../Core/Src/common/time_utils.cpp:17:6:void _delay(long unsigned int)	8	static
-../Core/Src/common/time_utils.cpp:25:15:long unsigned int _micros()	0	static
