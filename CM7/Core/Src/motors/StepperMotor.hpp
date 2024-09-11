@@ -490,7 +490,7 @@ class StepperMotor
     // sensor related variabels
     float               m_sensor_offset;           //!< user defined sensor zero offset
     float               m_radian_offset_to_electric_zero;     //!< absolute zero electric angle - if available
-  //  Direction           m_sensor_direction;        //!< default is CW. if sensor_direction == Direction::CCW then direction will be flipped compared to CW. Set to UNKNOWN to set by calibration
+    Direction           m_sensor_direction;        //!< default is CW. if sensor_direction == Direction::CCW then direction will be flipped compared to CW. Set to UNKNOWN to set by calibration
     
     
     

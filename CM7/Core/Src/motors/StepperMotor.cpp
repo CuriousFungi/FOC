@@ -187,7 +187,7 @@ StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi,
 //,   m_motion_cnt(0)
 ,   m_sensor_offset(0.0f)
 ,   m_radian_offset_to_electric_zero(NOT_SET)
-//,   m_sensor_direction(Direction::UNKNOWN)
+,   m_sensor_direction(Direction::UNKNOWN)
 
 // TODO: move to another class
 ,   m_monitor_downsample(DEF_MON_DOWNSMAPLE)
@@ -379,7 +379,6 @@ bool  StepperMotor::initFOC()
     HAL_Delay(500);
 
     success &= alignSensor(); // bitwise intentional
-success=true;
 
     m_sensor.update();
     m_shaft_angle = m_sensor.get_angle_radians();
@@ -448,17 +447,17 @@ bool StepperMotor::determine_sensor_direction()
        {
            // Movement too small to determine direction
            success = false;
-  //         m_sensor_direction = Direction::UNKNOWN;
+           m_sensor_direction = Direction::UNKNOWN;
        } 
        
-       //else if (delta_angle > 0) 
-       //{
-        //   m_sensor_direction = Direction::CW;
-      // } 
-       //else 
-      // {
-        //   m_sensor_direction = Direction::CCW;
-      // }
+       else if (delta_angle > 0) 
+       {
+          m_sensor_direction = Direction::CW;
+       } 
+       else 
+       {
+         m_sensor_direction = Direction::CCW;
+       }
 
        m_sensor.invert_output(delta_angle < 0.0f);
        
@@ -485,9 +484,9 @@ bool StepperMotor::alignSensor()
   const uint32_t TWO_MILLISECONDS(2);
   bool success(true);
 
- // if(Direction::UNKNOWN == m_sensor_direction)
+  if(Direction::UNKNOWN == m_sensor_direction)
   {
-   // if(needsSearch()) // TODO: need a clearer func name
+    if(needsSearch()) // TODO: need a clearer func name
     {
         success = absoluteZeroSearch();
     }
@@ -542,15 +541,15 @@ bool StepperMotor::alignSensor()
     {
       return 0; // failed calibration
     }
-   // else
-    //if (mid_angle < end_angle)
-   // {
-   //     m_sensor_direction = Direction::CCW;
-    //}
-    //else
-   // {
-    //    m_sensor_direction = Direction::CW;
-   // }
+    else
+    if (mid_angle < end_angle)
+    {
+        m_sensor_direction = Direction::CCW;
+    }
+    else
+    {
+        m_sensor_direction = Direction::CW;
+    }
 
     m_sensor.invert_output(mid_angle < end_angle);
 
@@ -1519,10 +1518,10 @@ float StepperMotor::get_filtered_shaft_angle()
     // float radians = m_LPF_angle( m_sensor.get_angle_radians());
     float radians =    m_sensor.get_angle_radians(); 
 
-  //  if(Direction::CCW == m_sensor_direction)
-   // {
-   //    radians *= -1.0f;
-   // }
+    if(Direction::CCW == m_sensor_direction)
+    {
+       radians *= -1.0f;
+    }
 
     // m_sensor_offset is currently 0
     return  radians - m_sensor_offset;
@@ -1536,8 +1535,8 @@ float StepperMotor::shaft_radians_per_second()
 {
   float rad_per_sec = m_LPF_velocity(m_sensor.get_radians_per_second());
   
-  //return (Direction::CCW ==m_sensor_direction) ? -rad_per_sec : rad_per_sec;
-  return rad_per_sec;
+  return (Direction::CCW ==m_sensor_direction) ? -rad_per_sec : rad_per_sec;
+  //return rad_per_sec;
 }
 
 //-----------------------------------------------------------------------------
@@ -1545,13 +1544,13 @@ float StepperMotor::shaft_radians_per_second()
 //-----------------------------------------------------------------------------
 float StepperMotor::get_electric_angle_radians()
 {
- // float direction       = static_cast<float>(m_sensor_direction);
+  float direction       = static_cast<float>(m_sensor_direction);
   
   float electic_radians = mechanical_to_electrical_radians(
                              m_sensor.get_mechanical_phase_angle_radians()) ;
   
-  //float raw_angle  = direction * electic_radians - m_radian_offset_to_electric_zero;
-  float raw_angle  = electic_radians - m_radian_offset_to_electric_zero;
+  float raw_angle  = direction * electic_radians - m_radian_offset_to_electric_zero;
+  //float raw_angle  = electic_radians - m_radian_offset_to_electric_zero;
 
   return  normalize_radians( raw_angle );
 }
