@@ -346,7 +346,7 @@ class StepperMotor
     //-------------------------------------------------------------------------
     float normalize_radians(float radians)
     {
-        float a = fmod(radians + TWO_PI, TWO_PI);
+        float a = fmod(radians, TWO_PI);
         
         return a < 0 ? a + TWO_PI : a;
     }
