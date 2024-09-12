@@ -108,7 +108,7 @@ StepperMotor stepper = StepperMotor(
                                      &hspi2,        //  sensor spi
                                      SPI2_CS_GPIO_Port,         //  p_sensor_chip_select_port,
                                      SPI2_CS_Pin,   //  sensor_chip_select_pin,
-                                     50,            //  number of pole pairs
+                                     100,            //  number of pole pairs
                                      212.0f,  //1.45f,         //  phase resistance
                                      1.0f,          // TODO: determine real  _KV, 
                                      3.2f,    //4.0f,          // mH inductance
