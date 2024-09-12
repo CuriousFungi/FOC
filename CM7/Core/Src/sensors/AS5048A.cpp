@@ -33,7 +33,7 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
                          | READ_WRITE_BIT
                          | PARITY_BIT
                        )
-,   COUNTS_PER_REVOLUTION((1 << BIT_RESOLUTION)-1)
+,   COUNTS_PER_REVOLUTION((1 << BIT_RESOLUTION))
 ,   COUNTS_PER_HALF_REVOLUTION(COUNTS_PER_REVOLUTION >> 1)
 ,   m_hspi(hspi)
 ,   m_p_chip_select_port(p_chip_select_port)
@@ -226,14 +226,15 @@ uint16_t smoothDACOutput(uint16_t new_value)
 
 float AS5048A::read_angle_radians()
 {
+    uint16_t raw_count = get_raw_count();
 
-    uint32_t raw_count = get_raw_count();
-
-    float count(static_cast<float>
-               ( (m_invert_output) ? -raw_count : raw_count));
+    float radians = TWO_PI
+                  * static_cast<float>(raw_count)
+                  / static_cast<float>(COUNTS_PER_REVOLUTION);
     
-    
-    float result =   TWO_PI * count /  static_cast<float>(COUNTS_PER_REVOLUTION);
+    float result = (m_invert_output) 
+                 ? -radians 
+                 :  radians;
 
 //---------------------
 #if 0
@@ -273,7 +274,7 @@ g_angle_radians = angle;
     // Clamp dac_value to avoid going out of range
    // dac_value = std::min(dac_value, DAC_MAX_VALUE);    
 
-    uint16_t new_dac_value = convertToSineDAC(count);
+    uint16_t new_dac_value = convertToSineDAC(raw_count);
     new_dac_value = smoothDACOutput(new_dac_value);
 
     HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, new_dac_value);
