@@ -80,7 +80,7 @@
 /* #define HAL_USART_MODULE_ENABLED   */
 /* #define HAL_IRDA_MODULE_ENABLED   */
 /* #define HAL_SMARTCARD_MODULE_ENABLED   */
-/* #define HAL_WWDG_MODULE_ENABLED   */
+#define HAL_WWDG_MODULE_ENABLED
 #define HAL_PCD_MODULE_ENABLED
 /* #define HAL_HCD_MODULE_ENABLED   */
 /* #define HAL_DFSDM_MODULE_ENABLED   */
@@ -171,7 +171,7 @@
 #define  USE_SD_TRANSCEIVER           0U               /*!< use uSD Transceiver */
 #define  USE_SPI_CRC	              0U               /*!< use CRC in SPI */
 
-#define  USE_HAL_ADC_REGISTER_CALLBACKS     0U /* ADC register callback disabled     */
+#define  USE_HAL_ADC_REGISTER_CALLBACKS     1U /* ADC register callback disabled     */
 #define  USE_HAL_CEC_REGISTER_CALLBACKS     0U /* CEC register callback disabled     */
 #define  USE_HAL_COMP_REGISTER_CALLBACKS    0U /* COMP register callback disabled    */
 #define  USE_HAL_CORDIC_REGISTER_CALLBACKS  0U /* CORDIC register callback disabled  */

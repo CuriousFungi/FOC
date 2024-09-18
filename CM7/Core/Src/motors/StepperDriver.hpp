@@ -33,6 +33,10 @@ extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim8;
 
+extern volatile float g_dutycycle_1A;
+extern volatile float g_dutycycle_1B;
+extern volatile float g_dutycycle_2A;
+extern volatile float g_dutycycle_2b;
 
 
 //=============================================================================
@@ -74,7 +78,7 @@ class StepperDriver
         	 m_initialized = true;
 
 
-#if 1
+#if 0
             HAL_StatusTypeDef status;
 
             MX_TIM1_Init();
@@ -264,7 +268,6 @@ class StepperDriver
              return;
          }
 
-
         
 
         void set_pwm_duty_cycle(float U_alpha, 
@@ -314,6 +317,11 @@ class StepperDriver
             {
                duty_cycle_2A = duty_cycle_beta * lofactor_2;
             }
+            
+            g_dutycycle_1A = duty_cycle_1A;
+            g_dutycycle_1B = duty_cycle_1B;
+            g_dutycycle_2A = duty_cycle_2A;
+            g_dutycycle_2b = duty_cycle_2B;
 
             set_dutycycles( duty_cycle_1A,
                             duty_cycle_1B,

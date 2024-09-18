@@ -1,6 +1,4 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
+/*******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
   ******************************************************************************
@@ -13,15 +11,10 @@
   * in the root directory of this software component.
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
+  ******************************************************************************/
 #include "main.h"
 #include "string.h"
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
 #include <string>
 #include <vector>
 
@@ -56,13 +49,6 @@ extern "C" {
 #define HSEM_ID_0 (0U) /* HW semaphore 0*/
 #endif
 
-#if defined ( __GNUC__ ) /* GNU Compiler */
-
-//extern ETH_DMADescTypeDef DMARxDscrTab[ETH_RX_DESC_CNT] __attribute__((section(".RxDecripSection"))); /* Ethernet Rx DMA Descriptors */
-//extern ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT] __attribute__((section(".TxDecripSection")));   /* Ethernet Tx DMA Descriptors */
-#endif
-
-//extern ETH_TxPacketConfig TxConfig;
 
 extern ADC_HandleTypeDef hadc1;
 extern DMA_HandleTypeDef hdma_adc1;
@@ -81,12 +67,14 @@ extern UART_HandleTypeDef huart3;
 extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 
-// TODO: restructure ADC interface
 #define NUM_ADC_CHANNELS 2
-volatile uint16_t adc_dma_result[NUM_ADC_CHANNELS];
+#define BUFFER_SIZE  32
+volatile uint16_t adc_dma_result[BUFFER_SIZE];
+
 // This variable calculate the array length.
 // In our case, array size in 2
 int adc_channel_count = sizeof(adc_dma_result)/sizeof(adc_dma_result[0]);
+
 // This flag will help to detect
 // the DMA conversion completed or not
 volatile uint8_t adc_conv_complete_flag = 0;
@@ -94,15 +82,33 @@ volatile uint8_t adc_conv_complete_flag = 0;
 // when DMA conversion is completed, HAL_ADC_ConvCpltCallback function
 // will interrupt the processor. You can find this function in
 // Drivers>STM32F4xx_HAL_Drivers>stm32f4xx_hal_adc.c file as __weak attribute
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
-	// I set adc_conv_complete_flag variable to 1 when,
-	// HAL_ADC_ConvCpltCallback function is call.
-	adc_conv_complete_flag = 1;
-    HAL_ADC_Stop_DMA(&hadc1);
+#if 0
+extern "C"
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    // I set adc_conv_complete_flag variable to 1 when,
+    // HAL_ADC_ConvCpltCallback function is call.
+    if (hadc->Instance == ADC1)
+    {
+      adc_conv_complete_flag = 1;
+        //HAL_ADC_Stop_DMA(&hadc1);
+    }
 }
+#endif
 
 
 /* USER CODE BEGIN PV */
+
+
+volatile float winding_amperage_a(0.0f);
+volatile float winding_amperage_b(0.0f);
+
+volatile float g_adc_to_voltage_a_0_5(0.0f);
+volatile float g_centered_voltage_a_absp925(0.0f);
+
+volatile float g_adc_to_voltage_b_0_5 (0.0f);
+volatile float g_centered_voltage_b_absp925(0.0f);
+
 
 StepperMotor stepper = StepperMotor(
                                      &hspi2,        //  sensor spi
@@ -126,261 +132,247 @@ void enableCycleCounter(void)
   DWT->CYCCNT       = 0; // Reset cycle counter
   DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk; // Enable cycle counter
 }
-/* USER CODE END PV */
 
-/* Private function prototypes -----------------------------------------------*/
-// void SystemClock_Config(void);
-// static void MX_GPIO_Init(void);
-// static void MX_ADC1_Init(void);
-// static void MX_DAC1_Init(void);
-// static void MX_ETH_Init(void);
-// static void MX_SPI1_Init(void);
-// static void MX_TIM1_Init(void);
-// static void MX_TIM8_Init(void);
-// static void MX_USART3_UART_Init(void);
-// static void MX_USB_OTG_FS_PCD_Init(void);
+bool is_foc_initialized = false;
 
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-
-#if 0
-// TODO: restructure ADC interface
-#define NUM_ADC_CHANNELS 4
-volatile uint16_t adc_dma_result[NUM_ADC_CHANNELS];
-// This variable calculate the array length.
-// In our case, array size in 2
-int adc_channel_count = sizeof(adc_dma_result)/sizeof(adc_dma_result[0]);
-// This flag will help to detect
-// the DMA conversion completed or not
-volatile uint8_t adc_conv_complete_flag = 0;
-// when DMA conversion is completed, HAL_ADC_ConvCpltCallback function
-// will interrupt the processor. You can find this function in
-// Drivers>STM32F4xx_HAL_Drivers>stm32f4xx_hal_adc.c file as __weak attribute
-extern "C"
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+struct winding_currents
 {
-	// I set adc_conv_complete_flag variable to 1 when,
-	// HAL_ADC_ConvCpltCallback function is call.
-	adc_conv_complete_flag = 1;
-  HAL_ADC_Stop_DMA(&hadc1);
+  float winding_amperage_a;
+  float winding_amperage_b;
+};
+
+winding_currents udpate_amperage(void)
+{
+    const float MAX_16BIT_ADC_COUNT(static_cast<float>(0xFFFF));
+    const float V_REF(5.0f);
+    const float ZERO_CURRENT_VOLTAGE (2.5f);
+    const float ZERO_CURRENT_VOLTAGE_A = 2.56f;   // Adjusted zero-current voltage for sensor A
+    const float ZERO_CURRENT_VOLTAGE_B = 2.59f;   // Adjusted zero-current voltage for sensor B
+    const float ACS712_05B_MILLIVOLTS_PER_AMP(0.185f);
+
+    // 5A * 0.185V/A-->0.925V
+    const float tweek(0.925f+.42f);
+        
+    // Converts ADC value to voltage (0V to 5V)
+    float adc_to_voltage_a = (static_cast<float>(adc_dma_result[0]) / MAX_16BIT_ADC_COUNT) * V_REF; 
+    float adc_to_voltage_b = (static_cast<float>(adc_dma_result[1]) / MAX_16BIT_ADC_COUNT) * V_REF; 
+        
+    // Center the voltage around 0A
+    float centered_voltage_a = adc_to_voltage_a - ZERO_CURRENT_VOLTAGE_A - tweek;
+    float centered_voltage_b = adc_to_voltage_b - ZERO_CURRENT_VOLTAGE_B - tweek;
+
+    // Convert voltage to current in Amperes
+    float winding_amps_a = centered_voltage_a / ACS712_05B_MILLIVOLTS_PER_AMP; 
+    float winding_amps_b = centered_voltage_b / ACS712_05B_MILLIVOLTS_PER_AMP; 
+
+    // Use clamping if needed to prevent unrealistic values
+    winding_amps_a = fmaxf(fminf(winding_amps_a, 5.0f), -5.0f);
+    winding_amps_b = fmaxf(fminf(winding_amps_b, 5.0f), -5.0f);
+
+
+
+    g_adc_to_voltage_a_0_5       = adc_to_voltage_a;
+    g_centered_voltage_a_absp925 =centered_voltage_a;
+    
+    g_adc_to_voltage_b_0_5        = adc_to_voltage_b;
+    g_centered_voltage_b_absp925  = centered_voltage_b;
+    
+
+
+    return {
+             .winding_amperage_a = winding_amps_a,
+             .winding_amperage_b = winding_amps_b
+           };
+            
 }
-#endif
+volatile float g_cmd_rps(0.0f);
+void update_ramp(void)
+{
+   static float rps = 0.0f;
+   static int   cnt = 0;
+
+   if (++cnt > 2000)
+   {
+     cnt = 0;
+     if (rps < 30.0f)
+     {
+        rps += 0.1f;
+        g_cmd_rps = rps;
+        stepper.move(rps);
+     }
+   }
+}
+
+extern "C"
+void foc_iteration(void)
+{
+    RefreshWatchdog();
+    
+    if(is_foc_initialized)
+    {  
+      winding_currents result = udpate_amperage();
+      stepper.loopFOC(result.winding_amperage_a, result.winding_amperage_b);
+      update_ramp();
+
+
+        // Inside your main loop or another appropriate place
+        if (__HAL_DMA_GET_FLAG(&hdma_adc1, DMA_FLAG_TEIF0_4))
+        {
+           // printf("DMA Transfer Error Detected.\n");
+            __HAL_DMA_CLEAR_FLAG(&hdma_adc1, DMA_FLAG_TEIF0_4);
+        }
+
+        // Check for ADC overrun
+        if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR))
+        {
+            __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+            // Log or handle ADC overrun
+        }
+
+
+//--------------------------
+
+
+        // Check DMA status
+        volatile uint32_t dma_stream_flags = DMA1->LISR;  // Check interrupt status register for stream 0
+        //printf("DMA LISR Flags: 0x%08X\n", dma_stream_flags);
+        
+        // Check if ADC is running
+        if (HAL_IS_BIT_SET(hadc1.Instance->CR, ADC_CR_ADSTART))
+        {
+            //printf("ADC conversion is active.\n");
+            volatile int dummy1 = 0;
+        }
+        else
+        {
+            //printf("ADC conversion is not active. Restart ADC-DMA.\n");
+            HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_result, NUM_ADC_CHANNELS);
+        }
+
+
+//---------------------------
+
+// Check the DMA stream control register (CR)
+volatile uint32_t dma_stream_cr = DMA1_Stream0->CR; // Check the configuration of the DMA stream
+//printf("DMA Stream Control Register (CR): 0x%08X\n", dma_stream_cr);
+
+// Check for DMA stream enable flag
+if (dma_stream_cr & DMA_SxCR_EN)
+{
+    volatile int dummy2 = 0;
+    //printf("DMA Stream is enabled.\n");
+}
+else
+{
+    //printf("DMA Stream is not enabled. Verify initialization and configuration.\n");
+}
+
+// Check for errors in DMA low interrupt status register (LISR)
+volatile uint32_t dma_lisr = DMA1->LISR;
+//printf("DMA LISR (Low Interrupt Status Register): 0x%08X\n", dma_lisr);
+volatile int dummy3 = dma_lisr;
+
+
+
+// Re-enable DMA stream if not enabled
+if (!(DMA1_Stream0->CR & DMA_SxCR_EN))
+{
+    DMA1_Stream0->CR |= DMA_SxCR_EN; // Enable the stream
+    //printf("DMA Stream manually enabled.\n");
+}
+
+volatile uint32_t fifo_status = DMA1_Stream0->FCR;
+//printf("DMA FIFO Status: 0x%08X\n", fifo_status);
+volatile int dummyA = fifo_status;
+
+
+
+uint32_t nvic_iser = NVIC->ISER[0];  // Check NVIC set-enable register for correct IRQ
+//printf("NVIC ISER: 0x%08X\n", nvic_iser);
+volatile int dummyB = nvic_iser;
+
+
+//-------------------------
+      
+    }
+}
+
 
 extern "C"
 void cpp_main(void)
 {
-
-
-
-	// Initialize the DMA conversion
-	HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
-
-
-
-
-
-
-
- // int32_t timeout;
-
-  /* Wait until CPU2 boots and enters in stop mode or timeout*/
-  // timeout = 0xFFFF;
-  // while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
-  // if ( timeout < 0 )
-  // {
-  // Error_Handler();
-  // }
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  //HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
   enableCycleCounter();
-  /* USER CODE END Init */
 
-  /* Configure the system clock */
- // SystemClock_Config();
-/* USER CODE BEGIN Boot_Mode_Sequence_2 */
-/* When system initialization is finished, Cortex-M7 will release Cortex-M4 by means of
-HSEM notification */
-/*HW semaphore Clock enable*/
-//__HAL_RCC_HSEM_CLK_ENABLE();
-/*Take HSEM */
-//HAL_HSEM_FastTake(HSEM_ID_0);
-/*Release HSEM in order to notify the CPU2(CM4)*/
-//HAL_HSEM_Release(HSEM_ID_0,0);
-/* wait until CPU2 wakes up from stop mode */
-// timeout = 0xFFFF;
-// while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
-// if ( timeout < 0 )
-// {
-// Error_Handler();
-// }
-/* USER CODE END Boot_Mode_Sequence_2 */
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  // MX_GPIO_Init();
-  // MX_ADC1_Init();
-  // MX_DAC1_Init();
-  // MX_ETH_Init();
-  // MX_SPI1_Init();
-  // MX_TIM1_Init();
-  // MX_TIM8_Init();
-  // MX_USART3_UART_Init();
-  // MX_USB_OTG_FS_PCD_Init();
-
-#if 0
-  __HAL_RCC_TIM8_CLK_ENABLE();
-  HAL_TIM_Base_Start(&htim8);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-  HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
-  __HAL_RCC_TIM1_CLK_ENABLE();
-  HAL_TIM_Base_Start(&htim1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-#endif
-  
   // Initialize the DMA conversion
-   HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
-  /* USER CODE END 2 */
+ volatile HAL_StatusTypeDef status = HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  //int as_count(0);
+//-------------------
+
+  volatile uint32_t dma_cr = DMA1_Stream0->CR;
+  if (!(dma_cr & DMA_SxCR_EN))
+  {
+      //printf("DMA Stream is not enabled when expected. Re-enabling.\n");
+      DMA1_Stream0->CR |= DMA_SxCR_EN; // Manually enable if not set
+  }
+
+
+
+//--------------
+
+
   uint32_t count(0);
   char char_buffer[50];
   std::vector<float> speeds;
-  for (float i = 0.0f; i <= 60.0f; i += 1.0f)
+  for (float i = 0.0f; i <= 8.0f; i += 0.1f)
   {
-         speeds.push_back(i);
+     speeds.push_back(i);
   }
   int num_speeds = speeds.size();
   int speed_index = 0;
   bool success = stepper.initFOC();
+  
+  is_foc_initialized = success;
+  
   if(success)
   {
    stepper.move(2.0f); // for closedloop velocity
   }
- // float target_angle_radians(0.0f);
+
   unsigned long prev_us = _micros();
-  const uint32_t MICROSECONDS_PER_ITERATION(20);
+  const uint32_t MICROSECONDS_PER_ITERATION(50); // 20KHz PWM
   const uint32_t MICROSECONDS_PER_SECOND(1000000);
   const uint32_t ITERATIONS_PER_SECOND(MICROSECONDS_PER_SECOND/MICROSECONDS_PER_ITERATION);
-// https://github.com/RobTillaart/ACS712
-const float V_REF(5.0f);
-//const float AMPS_PER_VOLT(2.0f); // per IBT2
-const float AMPS_PER_VOLT(5.41f); // per ACS712
-const float FULL_SCALE_ADC(V_REF * AMPS_PER_VOLT);
+  
+  // https://github.com/RobTillaart/ACS712
+  const float V_REF(5.0f);
+  //const float AMPS_PER_VOLT(2.0f); // per IBT2
+  const float AMPS_PER_VOLT(5.41f); // per ACS712
+  const float FULL_SCALE_ADC(V_REF * AMPS_PER_VOLT);
 
-//const float LSB_VALUE(FULL_SCALE_ADC / static_cast<float>(0xFFF));
+  //const float LSB_VALUE(FULL_SCALE_ADC / static_cast<float>(0xFFF));
 
-const float LSB_VALUE(
+  const float LSB_VALUE(
                        ( 1000.0f * ((1000.0f*V_REF) / static_cast<float>(0xFFFF)))
                       / (185.0f));
 
-
-
-const float ADC_OFFSET_VOLTAGE(0.0f);  //FULL_SCALE_ADC/2.0f);
   while (1)
   {
+    #if 0
       unsigned long now_us = _micros();
-  static bool init_failure_announced(false);
-  if((now_us - prev_us) > MICROSECONDS_PER_ITERATION)
-  {
-      float winding_amperage_a(0.0f);
-      float winding_amperage_b(0.0f);
-      //static float prev_winding_amperage_a(0.0f);
-      //static float prev_winding_amperage_b(0.0f);
+      if((now_us - prev_us) > MICROSECONDS_PER_ITERATION)
+      {    
+          if(++count > 100) //ITERATIONS_PER_SECOND/4)  // 1 sec when if((now_us - prev_us) > 1000) used
+          {
+              count = 0;
+              if(speed_index < num_speeds)
+              {
+                  stepper.move(speeds[speed_index++]);
+              }
+          }
       
-      if(success)
-      {
-    	  if(adc_conv_complete_flag == 1)
-    	  {
-              winding_amperage_a = (LSB_VALUE * static_cast<float>(adc_dma_result[0]));
-              winding_amperage_b = (LSB_VALUE * static_cast<float>(adc_dma_result[1]));
-              
-              adc_conv_complete_flag = 0;
-              HAL_ADC_Start_DMA(&hadc1, (uint32_t *)(adc_dma_result), NUM_ADC_CHANNELS);
-    	  }
-
-    	  uint32_t start = DWT->CYCCNT;  // Start timing
-
-          stepper.loopFOC(winding_amperage_a, winding_amperage_b);
-
-          uint32_t end = DWT->CYCCNT;    // End timing
-          uint32_t cycles = end - start; // Calculate elapsed cycles
-
-            // Optionally, you could log or store the 'cycles' variable for later analysis
-            printf("Cycles: %lu\n", cycles);
-
+          prev_us = now_us;
       }
-      else
-      {
-         if(!init_failure_announced)
-         {
-          sprintf(char_buffer, "\t\tstepper.initFOC(stepper.initFOC failed\r\n");
-          HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(char_buffer), strlen(char_buffer), HAL_MAX_DELAY);
-          init_failure_announced = true;
-         }
-      }
-#if 1 // used for OL speed control tests
-      if(++count > ITERATIONS_PER_SECOND/4)  // 1 sec when if((now_us - prev_us) > 1000) used
-      {
-          count = 0;
-          if(speed_index < num_speeds)
-          {
-                char  dash[] = "-";
-                HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(dash), strlen(dash), HAL_MAX_DELAY);
-              stepper.move(speeds[speed_index++]);
-          }
-      }
-#endif
-#if 0
-	  if(++count > ITERATIONS_PER_SECOND)  // 1 sec
-	  {
-	      count = 0;
-          as_count++;
-          target_angle_radians += (clockwise) ? 0.174533f: 0.174533f; // 10 degrees
-          clockwise = !clockwise;
-          if(success)
-          {
-          }
-	      float radians = stepper.get_angle_radians();     
-	      if(false) //(stepper.error_detected())
-	      {
-	    	  uint16_t error = stepper.get_errors();
-	          sprintf(char_buffer, "\t\tAS5048 Error: %d\r\n", (int)error);
-	          HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(char_buffer), strlen(char_buffer), HAL_MAX_DELAY);
-			  stepper.clear_error();
-	      }
-	      else
-	      {
-	          float degrees = radians * 360.0f / 6.28318530718f;
-	          sprintf(char_buffer, "%d\t\tdeg: %d\r\n", as_count, static_cast<int>(degrees*1000.0f));
-	          HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(char_buffer), strlen(char_buffer), HAL_MAX_DELAY);
-	      }
-	  }
- #endif
-      prev_us = now_us;
+      #endif;
   }
-  }
-  /* USER CODE END 3 */
 }
 

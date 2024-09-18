@@ -380,7 +380,7 @@ class StepperMotor
     
     float calculate_smoothing_rate(float target_electrical_rps);
 
-    const float         PI; 
+    const float         MY_PI; 
     const float         TWO_PI;
     const float         THREE_PI;
     const float         THREE_HALVES_PI;
@@ -436,9 +436,6 @@ class StepperMotor
     DQCurrent_s         m_amperage_prev; 
 
 
-    // Experimental
-    float               m_winding_amperage_a;
-    float               m_winding_amperage_b;
 
     // m_voltage_bemf should always be positive
     float               m_voltage_bemf;            //!< estimated backemf voltage (if provided KV constant)

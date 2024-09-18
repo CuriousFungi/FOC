@@ -9,15 +9,42 @@
 
 
 #include <math.h>
+
+
+//extern "C" {
+//    #include "arm_math.h"
+//}
+
 #include <limits>
 
 volatile float g_shaft_angle = 1.1f;
-volatile float g_mechanical_angle = 2.2f;
 volatile float g_mag_flux_linkage_q = 3.3f;
-volatile float g_back_emf_q_axis = 4.4f;
 
 
+volatile float g_electrical_a(0.0f);
+volatile float g_electrical_b(0.0f);
+volatile float g_electrical_c(0.0f);
+volatile float g_as5048_angle(0.0f);
+volatile float g_electrical_rad_ref(0.0f);
+volatile float g_electrical_rad_cmd(0.0f);
+volatile float g_velocity_correction(0.0f);
+volatile float g_back_emf_q_axis(0.0);
 
+volatile float g_dutycycle_1A(0.0f);
+volatile float g_dutycycle_1B(0.0f);
+volatile float g_dutycycle_2A(0.0f);
+volatile float g_dutycycle_2b(0.0f);
+
+volatile float g_winding_amps_a(0.0f);
+volatile float g_winding_amps_b(0.0f);
+volatile float g_current_offset_a(0.0f);
+volatile float g_current_offset_b(0.0f);
+
+volatile float g_computed_inductance(0.0f);
+volatile float g_amperage_q(0.0f);
+
+volatile float g_pre_clamp_v(0.0f);
+volatile float g_post_clamp_v(0.0f);
 
 // Example usage
 #if 0
@@ -79,7 +106,7 @@ StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi,
                                 uint32_t           timer_channel_phase_2A,
                                 uint32_t           timer_channel_phase_2B
 )
-:     PI( 3.14159265358979323846f)
+:     MY_PI( 3.14159265358979323846f)
 ,     TWO_PI(         6.28318530718f)
 ,     THREE_PI(       9.42477796077f)
 ,     THREE_HALVES_PI(4.71238898038f)
@@ -93,13 +120,13 @@ StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi,
 
 ,     PHASE_RESISTANCE_1KHZ(24.29f)
 ,     PHASE_RESISTANCE_10KHZ(212.00)
-,     PHASE_INDUCTANCE_1KHZ(3.9f)
-,     PHASE_INDUCTANCE_10KHZ(3.2)
+,     PHASE_INDUCTANCE_1KHZ(0.0039f)   // 3.9 mH --> 0.0039 H
+,     PHASE_INDUCTANCE_10KHZ(0.0032f)
 
 ,     MIN_ALIGN_ANGLE_DETECT_MOVEMENT(0.1f)       // Minimum angle to detect movement, adjust as needed
 ,     MAX_SENSOR_ANGLE(TWO_PI)     // Assuming 360 degree range for the sensor
 ,     NUM_STEPS(100)
-,     ROTATION_ANGLE(PI / 2.0f)  // 90 degrees in radians
+,     ROTATION_ANGLE(MY_PI / 2.0f)  // 90 degrees in radians
 ,     STEP_SIZE(ROTATION_ANGLE / static_cast<float>(NUM_STEPS) )
 ,     SQUARE_ROOT_OF_3_INVERSE(1.0f/static_cast<float>(compile_time_sqrt(3.0)))
 ,     PERM_MAGNET_FLUX_LINKAGE(0.171f)
@@ -134,10 +161,8 @@ StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi,
 ,   m_voltage_prev()
 ,   m_amperage()
 ,   m_amperage_prev()
-,   m_winding_amperage_a(0.0f)
-,   m_winding_amperage_b(0.0f)
 ,   m_voltage_bemf(0)
-,   m_voltage_sensor_align(3.0f)   //power_supply_voltage)
+,   m_voltage_sensor_align(12.0f)   //power_supply_voltage)
 ,   m_velocity_index_search(DEF_INDEX_SEARCH_TARGET_VELOCITY)
 
 ,   m_voltage_limit(voltage_limit)
@@ -306,19 +331,19 @@ float StepperMotor::inductance(float electical_radians_per_second)
 
     float inductance(0.0f);
 
-    if(electical_radians_per_second < ONE_KHZ_N_RPS)
+    if(electical_radians_per_second <= ONE_KHZ_N_RPS)
     {
         inductance = PHASE_INDUCTANCE_1KHZ;
     }
     else
-    if(electical_radians_per_second > TEN_KHZ_N_RPS)
+    if(electical_radians_per_second >= TEN_KHZ_N_RPS)
     {
         inductance = PHASE_INDUCTANCE_10KHZ;
     }
     else
     {
         inductance = PHASE_INDUCTANCE_1KHZ
-                   + (SLOPE * electical_radians_per_second); 
+                   + SLOPE * (electical_radians_per_second - ONE_KHZ_N_RPS); 
     }
 
     return inductance;
@@ -383,6 +408,8 @@ bool  StepperMotor::initFOC()
     m_sensor.update();
     m_shaft_angle = m_sensor.get_angle_radians();
 
+//success = true;
+
     if(success)
     {
     	m_motor_status = FOC_MOTOR_STATUS::READY;
@@ -401,6 +428,9 @@ bool  StepperMotor::initFOC()
 bool StepperMotor::determine_sensor_direction()
 {
        bool  success(true);
+
+return true;
+
        float mechanical_angle(0.0f);
        
        float initial_angle = m_sensor.read_angle_radians();
@@ -412,7 +442,7 @@ bool StepperMotor::determine_sensor_direction()
          
            setPhaseVoltage(m_voltage_sensor_align, 
                            0.0f,  
-                           mechanical_to_electrical_radians(mechanical_angle));
+                           _normalizeAngle(mechanical_to_electrical_radians(mechanical_angle)));
 #if 0 // debug
            char char_buffer[50];
            sprintf(char_buffer, "o: %ld  rad: %d\r\n", 
@@ -478,11 +508,15 @@ bool StepperMotor::determine_sensor_direction()
 //-----------------------------------------------------------------------------
 bool StepperMotor::alignSensor()
 {
-   return determine_sensor_direction();
+  bool success = determine_sensor_direction();
+
+  if(!success)
+  {
+      return success;
+  }
 
 
   const uint32_t TWO_MILLISECONDS(2);
-  bool success(true);
 
   if(Direction::UNKNOWN == m_sensor_direction)
   {
@@ -600,9 +634,11 @@ bool StepperMotor::alignSensor()
 //-----------------------------------------------------------------------------
 //                          absoluteZeroSearch
 //
-// Encoder alignment the absolute zero angle - to the index
+// Encoder alignment the absolute zero angle - to the index pin
 //
 // return true if search is complete
+//
+// Just return since we don't have an index pin
 //-----------------------------------------------------------------------------
 bool StepperMotor::absoluteZeroSearch()
 {
@@ -647,41 +683,29 @@ void StepperMotor::loopFOC(float winding_amperage_a, float winding_amperage_b)
     //const uint32_t TWO_MILLISECOND(2);
 
     const float SECONDS_PER_MICROSECOND( 0.000001f); // TODO move to class level
+    const float MICROSECONDS_PER_FRAME (50.0f);
+    const float DELTA_T_SECONDS(MICROSECONDS_PER_FRAME * SECONDS_PER_MICROSECOND);
     
-    unsigned long now_us = _micros();
+    //unsigned long now_us = _micros();
 
     // divide offset by range of 5 volts, then take half
-    float current_offset_a = m_current_offset_a.update(winding_amperage_a)/10.0f;
-    float current_offset_b = m_current_offset_a.update(winding_amperage_b)/10.0f;
-#if 0
+    float current_offset_a = m_current_offset_a.update(winding_amperage_a);
+    float current_offset_b = m_current_offset_b.update(winding_amperage_b);
 
-    if(current_offset_a > 0.0)
-    {
-        m_hifactor_a = (1.0f-current_offset_a);
-        m_lofactor_a = (1.0f+current_offset_a);
-    }
-    else
-    {
-        m_hifactor_a = (1.0f+current_offset_a);
-        m_lofactor_a = (1.0f-current_offset_a);
-    }
 
-    if(current_offset_b > 0.0)
-    {
-        m_hifactor_b = (1.0f-current_offset_b);
-        m_lofactor_b = (1.0f+current_offset_b);
-    }
-    else
-    {
-        m_hifactor_b = (1.0f+current_offset_b);
-        m_lofactor_b = (1.0f-current_offset_b);
-    }
-#endif
-
-    float delta_t           = static_cast<float>(now_us - m_target_prev_timestamp)
-                            * SECONDS_PER_MICROSECOND;
     
-    m_target_prev_timestamp = now_us;
+
+    float corrected_current_a = 0.5f * winding_amperage_a ; //- current_offset_a;
+    float corrected_current_b = 0.5f * winding_amperage_b ; //- current_offset_b;
+
+    // Convert offsets to current in amperes ACS712-05B
+    //float winding_amps_a = corrected_current_a / 0.185; // Convert corrected voltage to current
+    //float winding_amps_b = corrected_current_b / 0.185; // Convert corrected voltage to current
+
+    g_winding_amps_a = corrected_current_a;
+    g_winding_amps_b = corrected_current_b;
+    g_current_offset_a = current_offset_a;
+    g_current_offset_b = current_offset_b;
     
     m_sensor.update();
 
@@ -689,18 +713,12 @@ void StepperMotor::loopFOC(float winding_amperage_a, float winding_amperage_b)
 
     g_shaft_angle = m_shaft_angle;
 
-
-
     // Filter the current readings
     //m_winding_amperage_a = m_LPF_current_winding_a(winding_amperage_a);
     //m_winding_amperage_b = m_LPF_current_winding_a(winding_amperage_b);
 
-    //With ACS712, the input is fairly smooth.
-    m_winding_amperage_a = winding_amperage_a;
-    m_winding_amperage_b = winding_amperage_b;
-    
-    transformCurrents( winding_amperage_a,
-                       winding_amperage_b,
+    transformCurrents( corrected_current_a,
+    		           corrected_current_b,
                        m_shaft_angle,
                        m_amperage.d,
                        m_amperage.q);
@@ -714,26 +732,26 @@ void StepperMotor::loopFOC(float winding_amperage_a, float winding_amperage_b)
         
         case MOTION_CONTROL_TYPE::CL_ANGLE:
              
-             update_position_closed_loop(m_target, delta_t);
+             update_position_closed_loop(m_target, DELTA_T_SECONDS);
     
              break;
              
              
         case MOTION_CONTROL_TYPE::CL_VELOCITY:
     
-             update_speed_closed_loop(m_target,  delta_t);
+             update_speed_closed_loop(m_target,  DELTA_T_SECONDS);
                                   
              break;
              
         case MOTION_CONTROL_TYPE::OL_VELOCITY:
 
-             update_speed_open_loop(m_target,  delta_t);
+             update_speed_open_loop(m_target,  DELTA_T_SECONDS);
 
              break;
         
         case MOTION_CONTROL_TYPE::OL_ANGLE:
     
-             update_position_open_loop(m_target,  delta_t);
+             update_position_open_loop(m_target,  DELTA_T_SECONDS);
              
              break;
     
@@ -756,35 +774,14 @@ void StepperMotor::loopFOC(float winding_amperage_a, float winding_amperage_b)
 //-----------------------------------------------------------------------------
 void StepperMotor::move(float new_target) 
 {
-    const float MICROSECONDS_PER_SECONDS_PER_MICROSECOND( 0.000001f); // TODO move to class level
-    
-    unsigned long now_us = _micros();
-    
-    float delta_t           = static_cast<float>(now_us - m_target_prev_timestamp)
-                            * MICROSECONDS_PER_SECONDS_PER_MICROSECOND;
+    const float SECONDS_PER_MICROSECOND( 0.000001f); // TODO move to class level
+    const float MICROSECONDS_PER_FRAME (50.0f);
+    const float DELTA_T_SECONDS(MICROSECONDS_PER_FRAME * SECONDS_PER_MICROSECOND);
+        
     float delta_target      = new_target - m_target_prev;
     m_target_prev           = new_target;
-    m_target_prev_timestamp = now_us;
     
 
-    // downsampling (optional)
-   // if(m_motion_cnt++ < m_motion_downsample)
-    //{
-    //    return;
-   // }
-    
-  //  m_motion_cnt = 0;
-
-    // shaft angle/velocity need the update() to be called first
-    // get shaft angle
-    // TODO sensor precision: the shaft_angle actually stores the complete position, 
-    //                        including full rotations, as a float. For this 
-    //                        reason it is NOT precise when the angles become large.
-    //                        Additionally, the way LPF works on angle is a precision 
-    //                        issue, and the angle-LPF is a problem
-    //                        when switching to a 2-component representation.
-
-    // read value even if motor is not in openloop mode
  #if 0   
     m_sensor.update();
         
@@ -798,7 +795,7 @@ void StepperMotor::move(float new_target)
 #endif
     // Ohm's law
     // m_amperage appears to be set but not used
-//    m_amperage.q = (m_voltage.q - m_voltage_bemf) / resistance();
+    //    m_amperage.q = (m_voltage.q - m_voltage_bemf) / resistance();
 
     // choose control loop
     switch (m_motion_control) 
@@ -808,19 +805,21 @@ void StepperMotor::move(float new_target)
            // In this context, the new_target has units of volts
            // The quadrature voltage controls the torque
 
-           update_torque_open_loop(new_target, delta_t, delta_target);
+           update_torque_open_loop(new_target, DELTA_T_SECONDS, delta_target);
                        
            break;
            
       
       case MOTION_CONTROL_TYPE::CL_ANGLE:
+      {
 
            m_target = new_target;       
-
+      }
            break;
            
            
       case MOTION_CONTROL_TYPE::CL_VELOCITY:
+      {
 
            m_target = new_target;    
 
@@ -828,10 +827,7 @@ void StepperMotor::move(float new_target)
            m_amperage_prev.q = m_amperage.q = 0.0f;
            m_voltage_prev.d  = m_voltage.d  = 0.0f;
            m_voltage_prev.q  = m_voltage.q  = 0.0f;
-
-
-      
-                                
+      }                         
            break;
            
       case MOTION_CONTROL_TYPE::OL_VELOCITY:
@@ -861,9 +857,9 @@ void StepperMotor::move(float new_target)
            break;
            
       case MOTION_CONTROL_TYPE::OL_ANGLE:
-
+      {
            m_target = new_target;  
-           
+      }    
            break;
 
       default:
@@ -999,10 +995,24 @@ void backup StepperMotor::update_speed_closed_loop(
 // Read the current motor angle from the sensor, turn it into the electrical 
 // angle and transforms the q-axis Uq voltage command motor.voltage_q
 //-----------------------------------------------------------------------------
-void StepperMotor::update_speed_closed_loop(
-                                                float target_mechanical_rps, 
-                                                float delta_t)
+float smooth(float current_value, float previous_value, float alpha)
 {
+    // Ensure alpha is between 0 and 1; 0 means no smoothing, 1 means full smoothing (no change)
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    // Apply smoothing: blend current and previous values
+    return (alpha * current_value) + ((1.0f - alpha) * previous_value);
+}
+
+
+void StepperMotor::update_speed_closed_loop(
+                                                float target_mechanical_rps,
+                                                float delta_seconds)
+{
+    // Proportional gains (adjust these as needed)
+    float Kp_velocity = 0.01f; // Initial gain for velocity correction
+
     if(FP_ZERO == fpclassify(target_mechanical_rps))
      {
        m_voltage.q  = 0.0f;
@@ -1012,31 +1022,127 @@ void StepperMotor::update_speed_closed_loop(
        return;
      }
 
+     // Calculate the target electrical speed and estimate shaft speed
      float target_electrical_rps = mechanical_to_electrical_radians(target_mechanical_rps);
+     float shaft_radians_per_sec = m_sensor.get_radians_per_second();
+     float velocity_error        = target_mechanical_rps - shaft_radians_per_sec;
+     float velocity_correction   = Kp_velocity * velocity_error;
 
-     float velocity_error = target_mechanical_rps - m_sensor.get_radians_per_second();
+     float mechanical_rps_cmd   = target_mechanical_rps + velocity_correction;
 
-     static float mechanical_radians(0.0f); // TODO: s.b. member
-     mechanical_radians += target_mechanical_rps*delta_t;
+     // Calculate desired q-axis voltage (without proportional corrections for now)
+     float computed_inductance = inductance(target_electrical_rps) ;
+     float mag_flux_linkage_q = computed_inductance * m_amperage.q;
+     float back_emf_q_axis    = shaft_radians_per_sec * (mag_flux_linkage_q + PERM_MAGNET_FLUX_LINKAGE);
+     float desired_voltage_q  = m_current_limit * resistance(target_electrical_rps)
+                              + fabs(back_emf_q_axis)
+                              + velocity_correction;
      
-     mechanical_radians = normalize_radians(mechanical_radians);
+     g_back_emf_q_axis=back_emf_q_axis;
+     g_velocity_correction = velocity_correction;
+     g_computed_inductance = computed_inductance;
+     g_amperage_q = m_amperage.q;
      
-//override
-  //  mechanical_radians = g_shaft_angle;
+     // Increment mechanical radians based on command
+     static float mechanical_radians(0.0f);
+     //mechanical_radians   += target_mechanical_rps*delta_seconds;
+     mechanical_radians     += mechanical_rps_cmd*delta_seconds;
+     float alt_electric_cmd  = mechanical_to_electrical_radians(mechanical_radians);
+     alt_electric_cmd        = _normalizeAngle(alt_electric_cmd);
 
 
-    g_mechanical_angle = mechanical_radians;
+    static float electrical_radians = get_electric_angle_radians();
+    electrical_radians += mechanical_to_electrical_radians(mechanical_rps_cmd*delta_seconds);
+    electrical_radians  = _normalizeAngle(electrical_radians);
 
+    float actual_electrical_angle = get_electric_angle_radians(); // Feedback
+#if 0   
+    //static float 
+    electrical_radians = actual_electrical_angle;
+#else
+    electrical_radians = smooth(electrical_radians, actual_electrical_angle, 0.1f);  // Blend feedback and previous estimate
+#endif
 
-    float mag_flux_linkage_q = inductance(target_electrical_rps) * m_amperage.q;  
-    float back_emf_q_axis    = m_omega_mechanical_rps 
-                             * (mag_flux_linkage_q + PERM_MAGNET_FLUX_LINKAGE);
+    g_electrical_rad_cmd = electrical_radians;
+
+    g_as5048_angle        = normalize_radians((m_sensor.get_mechanical_phase_angle_radians()));
+    g_electrical_rad_ref = normalize_radians(mechanical_to_electrical_radians(g_as5048_angle));
+
+    // Optional smoothing to reduce noise in the reference signal
+    static float previous_ref_angle = 0.0f;
+    g_electrical_rad_ref = smooth(g_electrical_rad_ref, previous_ref_angle, 0.1f); // Alpha = 0.1 for smoothing
+    previous_ref_angle = g_electrical_rad_ref;
+
+    g_pre_clamp_v = desired_voltage_q;
+    float target_voltage_q = symetric_clamp(desired_voltage_q, m_voltage_limit);
+    g_post_clamp_v = target_voltage_q; 
+    // Apply smoothing only if speed is high enough
+
+    m_voltage.q = smooth_voltage_adjustment(m_voltage.q, target_voltage_q, 0.9f, delta_seconds);
+      
+    m_voltage.q = target_voltage_q;
+    m_voltage.d     = 0.0f;
+
+    setPhaseVoltage(m_voltage.q, m_voltage.d, electrical_radians);
 
     g_mag_flux_linkage_q = mag_flux_linkage_q;
     g_back_emf_q_axis    = back_emf_q_axis;
+}
 
-    float desired_voltage_q = m_current_limit * resistance(target_electrical_rps) 
-                            + fabs(back_emf_q_axis);
+
+                                                
+#if 0
+void StepperMotor::update_speed_closed_loop(
+                                                float target_mechanical_rps, 
+                                                float delta_seconds)
+{
+    // Proportional gains (adjust these as needed)
+    float Kp_velocity = 0.01f; // Initial gain for velocity correction
+    
+    if(FP_ZERO == fpclassify(target_mechanical_rps))
+     {
+       m_voltage.q  = 0.0f;
+       m_voltage.d  = 0.0f;
+       setPhaseVoltage(m_voltage.q, m_voltage.d, 0.0f);
+
+       return;
+     }
+
+     // Calculate the target electrical speed and estimate shaft speed
+     float target_electrical_rps = mechanical_to_electrical_radians(target_mechanical_rps);
+     float shaft_radians_per_sec = m_sensor.get_radians_per_second();
+     float velocity_error        = target_mechanical_rps - shaft_radians_per_sec;
+     float velocity_correction   = Kp_velocity * velocity_error;
+     
+     float mechanical_rps_cmd   = target_mechanical_rps + velocity_correction;   
+
+     // Calculate desired q-axis voltage (without proportional corrections for now)
+     float mag_flux_linkage_q = inductance(target_electrical_rps) * m_amperage.q;
+     float back_emf_q_axis    = shaft_radians_per_sec * (mag_flux_linkage_q + PERM_MAGNET_FLUX_LINKAGE);
+     float desired_voltage_q  = m_current_limit * resistance(target_electrical_rps) 
+                              ; //+ fabs(back_emf_q_axis)
+                              ; //+ velocity_correction;
+
+     // Increment mechanical radians based on command
+     static float mechanical_radians(0.0f);
+     //mechanical_radians   += target_mechanical_rps*delta_seconds;
+     mechanical_radians     += mechanical_rps_cmd*delta_seconds;
+     float alt_electric_cmd  = mechanical_to_electrical_radians(mechanical_radians);
+     alt_electric_cmd        = _normalizeAngle(alt_electric_cmd);
+
+
+    static float electrical_radians =
+    get_electric_angle_radians();
+    electrical_radians += mechanical_to_electrical_radians(mechanical_rps_cmd*delta_seconds);
+    electrical_radians  = _normalizeAngle(electrical_radians);
+
+
+    g_electrical_rad_cmd = electrical_radians;
+    
+    g_as5048_angle        = normalize_radians((m_sensor.get_mechanical_phase_angle_radians()));
+    g_electrical_rad_ref = normalize_radians(mechanical_to_electrical_radians(g_as5048_angle));
+
+
 
     m_voltage.q     = symetric_clamp(desired_voltage_q, m_voltage_limit);
 
@@ -1047,13 +1153,16 @@ void StepperMotor::update_speed_closed_loop(
     m_voltage.q = smooth_voltage_adjustment(m_voltage.q, 
                                             desired_voltage_q, 
                                             voltage_smoothing_rate, 
-                                            delta_t);
+											delta_seconds);
     
     m_voltage.d     = 0.0f;
-    setPhaseVoltage(m_voltage.q, 
-                    m_voltage.d,  
-                    mechanical_to_electrical_radians(mechanical_radians));
+
+    setPhaseVoltage(m_voltage.q, m_voltage.d, electrical_radians);
+    
+    g_mag_flux_linkage_q = mag_flux_linkage_q;
+    g_back_emf_q_axis    = back_emf_q_axis;               
 }
+#endif
 
 #if 0 // backup of function before modification
 void StepperMotor::update_speed_closed_loop(
@@ -1365,6 +1474,9 @@ void StepperMotor::parkTransform( float  Ialpha,
 {
     Id =  Ialpha * cosf(theta) + Ibeta * sinf(theta);
     Iq = -Ialpha * sinf(theta) + Ibeta * cosf(theta);
+    
+    //Id =  Ialpha * arm_cos_f32(theta) + Ibeta * arm_sin_f32(theta);
+    //Iq = -Ialpha * arm_sin_f32(theta) + Ibeta * arm_cos_f32(theta);
 }
 
 void StepperMotor::transformCurrents( 
@@ -1380,7 +1492,7 @@ void StepperMotor::transformCurrents(
     clarkeTransform(Ia, Ib, Ialpha, Ibeta);
 
     // Convert encoder angle to radians
-    float theta = encoderAngle * PI / 180.0f;
+    float theta = encoderAngle * MY_PI / 180.0f;
 
     // Perform Park Transformation
     parkTransform(Ialpha, Ibeta, theta, Id, Iq);
@@ -1401,7 +1513,9 @@ compute_inverse_park_transform(
     // Inverse Park transformation
     float _sa;
     float _ca;
+    
     _sincos(electric_angle, &_sa, &_ca);
+    //arm_sin_cos_f32(electric_angle, &_sa, &_ca);
     //sincos(electric_angle, &_sa, &_ca);
     
     // Inverse park transform
@@ -1566,8 +1680,8 @@ void StepperMotor::rotorFieldAlignment(double targetPosition)
     float voltage         = 0.0f; // Motor voltage (V)
     
     // Specify the alignment speed and acceleration
-    float alignmentSpeed        = 2 * PI; // radians per second
- //   float alignmentAcceleration = PI;     // radians per second squared
+    float alignmentSpeed        = 2 * MY_PI; // radians per second
+ //   float alignmentAcceleration = MY_PI;     // radians per second squared
 
 
 const int ITERATION_LIMIT(100);

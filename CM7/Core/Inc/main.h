@@ -51,6 +51,11 @@ void MX_TIM8_Init(void);
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 void Error_Handler(void);
 
+//void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
+//uint32_t read_adc_value(void);
+
+void RefreshWatchdog(void);
+
 
 /* USER CODE END EM */
 

@@ -1,6 +1,13 @@
 #include "CurrentSense.hpp"
 
 
+
+//extern "C" {
+//    #include "arm_math.h"
+//}
+
+
+
 // get current magnitude 
 //   - absolute  - if no electrical_angle provided 
 //   - signed    - if angle provided
@@ -41,11 +48,21 @@ float CurrentSense::getDCCurrent(float motor_electrical_angle){
     if(motor_electrical_angle) {
         float ct;
         float st;
+    
         _sincos(motor_electrical_angle, &st, &ct);
+        //arm_sin_cos_f32(motor_electrical_angle, &st, &ct); // _sincos --> arm_sin_cos_f32
         sign = (i_beta*ct - i_alpha*st) > 0 ? 1 : -1;  
     }
     // return current magnitude
+#if 0    
+    float input = i_alpha*i_alpha + i_beta*i_beta;
+    float sqrt_result;
+    arm_sqrt_f32(input, &sqrt_result);
+    return sign*sqrt_result; // _sqrt--> arm_sqrt_f32
+#else
     return sign*_sqrt(i_alpha*i_alpha + i_beta*i_beta);
+
+#endif
 }
 
 // function used with the foc algorihtm
@@ -84,7 +101,11 @@ DQCurrent_s CurrentSense::getFOCCurrents(float angle_el){
     // calculate park transform
     float ct;
     float st;
+#if 0    
+    arm_sin_cos_f32(angle_el, &st, &ct);
+#else
     _sincos(angle_el, &st, &ct);
+#endif
     DQCurrent_s return_current;
     return_current.d = i_alpha * ct + i_beta * st;
     return_current.q = i_beta * ct - i_alpha * st;

@@ -2,8 +2,20 @@
 #include "AS5048A.hpp"
 #include "../../Inc/EnumValue.hpp"
 #include "../common/time_utils.hpp"
+
 #include <math.h>
+
+
 #include <cmath>  // For std::sin and M_PI
+
+
+//extern "C" {
+//    #include "arm_math.h"
+//} // Include CMSIS-DSP
+
+
+
+
 #include <algorithm>
 
 //TODO: look at https://github.com/sosandroid/AMS_AS5048B/blob/master/ams_as5048b.cpp
@@ -15,9 +27,6 @@ extern UART_HandleTypeDef huart2;
 #endif
 
 extern DAC_HandleTypeDef hdac1;
-
-float g_angle_radians;
-
 
 //-----------------------------------------------------------------------------
 //                          CTor
@@ -61,6 +70,110 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
 //-----------------------------------------------------------------------------
 //                          update
 //-----------------------------------------------------------------------------
+void AS5048A::update()
+{
+    const float MICROSECONDS_PER_SECOND = 1000000.0f;
+    const float MAX_RADIANS_CHANGE = TWO_PI * 0.2f; // Example threshold to detect large spikes
+    const float ALPHA = 0.1f;  // Smoothing factor for radians per second
+
+    float curr_radians = read_angle_radians();
+    uint32_t curr_microseconds = _micros();
+
+    // Handle rollover of the microsecond counter
+    uint32_t delta_microseconds;
+    if (curr_microseconds < m_prev_microseconds) {
+        delta_microseconds = (UINT32_MAX - m_prev_microseconds) + curr_microseconds + 1;
+    } else {
+        delta_microseconds = curr_microseconds - m_prev_microseconds;
+    }
+
+    float delta_radians = curr_radians - m_prev_angle_radians;
+
+    // Handle overflow/underflow if the angle crosses the wraparound point
+    if (fabs(delta_radians) > (0.8f * TWO_PI)) {
+        if (delta_radians > 0.0f) {
+            m_full_rotations -= 1;
+            delta_radians += TWO_PI;
+        } else {
+            m_full_rotations += 1;
+            delta_radians -= TWO_PI;
+        }
+    }
+
+    // Combine full rotations into delta radians
+    int32_t delta_rotations = m_full_rotations - m_prev_full_rotations;
+    float delta_rotation_radians = TWO_PI * static_cast<float>(delta_rotations);
+    float delta_radians_combined = delta_rotation_radians + delta_radians;
+
+    // Outlier rejection: Ignore unrealistic large spikes in delta radians
+    if (fabs(delta_radians_combined) > MAX_RADIANS_CHANGE) {
+        delta_radians_combined = 0.0f; // Ignore this update if it's an outlier
+    }
+
+    // Calculate radians per second with smoothing
+    float delta_microseconds_f = static_cast<float>(delta_microseconds);
+    float instantaneous_radians_per_second = (MICROSECONDS_PER_SECOND * delta_radians_combined) / delta_microseconds_f;
+
+    // Smooth the radians per second to reduce spikes
+    float radians_per_second = ALPHA * instantaneous_radians_per_second + (1.0f - ALPHA) * m_prev_radians_per_sec;
+
+    // Update state variables
+    m_prev_full_rotations = m_full_rotations;
+    m_prev_angle_radians = curr_radians;
+    m_prev_radians_per_sec = radians_per_second;
+    m_prev_microseconds = curr_microseconds;
+}
+
+#if 0
+void AS5048A::update()
+{
+    const float MICROSECONDS_PER_SECOND = 1000000.0f;
+
+    float curr_radians = read_angle_radians();
+    uint32_t curr_microseconds = _micros();
+
+    // Handle rollover of the microsecond counter
+    uint32_t delta_microseconds;
+    if (curr_microseconds < m_prev_microseconds) {
+        delta_microseconds = (UINT32_MAX - m_prev_microseconds) + curr_microseconds + 1;
+    } else {
+        delta_microseconds = curr_microseconds - m_prev_microseconds;
+    }
+
+    float delta_radians = curr_radians - m_prev_angle_radians;
+
+    // Handle overflow/underflow if the angle crosses the wraparound point
+    if (fabs(delta_radians) > (0.8f * TWO_PI)) {
+        if (delta_radians > 0.0f) {
+            m_full_rotations -= 1;
+            delta_radians += TWO_PI;
+        } else {
+            m_full_rotations += 1;
+            delta_radians -= TWO_PI;
+        }
+    }
+
+    int32_t delta_rotations = m_full_rotations - m_prev_full_rotations;
+    float delta_rotation_radians = TWO_PI * static_cast<float>(delta_rotations);
+    float delta_radians_combined = delta_rotation_radians + delta_radians;
+
+    // Calculate radians per second
+    float delta_microseconds_f = static_cast<float>(delta_microseconds);
+    float radians_per_second = (MICROSECONDS_PER_SECOND * delta_radians_combined) / delta_microseconds_f;
+
+    // Optional: Smoothing to reduce noise spikes
+    float alpha = 0.1f; // Smoothing factor
+    radians_per_second = alpha * radians_per_second + (1.0f - alpha) * m_prev_radians_per_sec;
+
+    // Update state variables
+    m_prev_full_rotations = m_full_rotations;
+    m_prev_angle_radians = curr_radians;
+    m_prev_radians_per_sec = radians_per_second;
+    m_prev_microseconds = curr_microseconds;
+}
+#endif
+
+#if 0
 void AS5048A::update()
 {
 
@@ -109,7 +222,7 @@ void AS5048A::update()
     m_prev_radians_per_sec = radians_per_second;
     m_prev_microseconds    = curr_microseconds;
 }
-
+#endif
 //-----------------------------------------------------------------------------
 //                          get_radians_per_second
 //-----------------------------------------------------------------------------
@@ -160,6 +273,7 @@ uint16_t convertToSineDAC(uint16_t count)
 
     // Calculate the sine of the angle, scaled to the DAC range
     float sine_value = std::sin(angle);  // Output range: [-1, 1]
+    //float sine_value = arm_sin_f32(angle);  // Output range: [-1, 1]
 
     // Ensure angle is within expected range
      if (angle < 0.0f)
@@ -170,8 +284,6 @@ uint16_t convertToSineDAC(uint16_t count)
      {
         angle -= 2.0f * M_PI;
      }
-
-     g_angle_radians = angle;
 
     // Scale sine value to the DAC range centered around DAC_MIDPOINT
     uint16_t dac_value = static_cast<uint16_t>(DAC_MIDPOINT + sine_value * (DAC_MAX_VALUE / 2.0f));
@@ -262,7 +374,6 @@ float sine_value = std::sin(angle);  // Output range: [-1, 1]
     angle -= 2.0f * M_PI;
  }
 
-g_angle_radians = angle;
 #endif
 
 //------------------------
