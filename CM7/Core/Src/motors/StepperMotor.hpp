@@ -129,6 +129,50 @@ enum class FOC_MOTOR_STATUS : uint8_t
 
 
 
+class PIDController2 {
+public:
+    float Kp, Ki, Kd;  // Proportional, Integral, and Derivative gains
+    float previous_error;
+    float integral;
+    float max_output;
+    
+    PIDController2(float kp, float ki, float kd, float max_out)
+        : Kp(kp), Ki(ki), Kd(kd), previous_error(0), integral(0), max_output(max_out) {}
+
+    // PID calculation function
+    float calculate(float setpoint, float measured_value, float delta_time) {
+        // Calculate error
+        float error = setpoint - measured_value;
+
+        // Proportional term
+        float Pout = Kp * error;
+
+        // Integral term
+        integral += error * delta_time;
+        float Iout = Ki * integral;
+
+        // Derivative term
+        float derivative = (error - previous_error) / delta_time;
+        float Dout = Kd * derivative;
+
+        // Total output
+        float output = Pout + Iout + Dout;
+
+        // Clamp output to the maximum allowed value
+        if (output > max_output) {
+            output = max_output;
+        } else if (output < -max_output) {
+            output = -max_output;
+        }
+
+        // Store error for the next derivative calculation
+        previous_error = error;
+
+        return output;
+    }
+};
+
+
 
 //=============================================================================
 //                          StepperMotor Class
