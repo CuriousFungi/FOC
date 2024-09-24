@@ -39,6 +39,8 @@ extern "C" {
 
 void cpp_main(void);
 void foc_iteration(void);      
+void wrapper_control_loop_25us(void);
+
 void RefreshWatchdog(void);
 
 
@@ -107,7 +109,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM1)  // Check if the callback is triggered by TIM1
     {
-        foc_iteration();  // Call your FOC loop function
+      //  foc_iteration();  // Call your FOC loop function
+      wrapper_control_loop_25us();
+    }
+    else if (htim->Instance == TIM8) 
+    {
+       volatile int goo= 3;;
     }
 }
 
@@ -234,12 +241,23 @@ HAL_StatusTypeDef Start_DAC_DMA(void)
 
 
 #if 1
+// Define ITM port 0 register address for printf redirection
+#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
+#define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
+
 int _write(int file, char *ptr, int len) {
     for (int i = 0; i < len; i++) {
-        ITM_SendChar(ptr[i]);
+        // Wait until ITM is enabled
+        if ((ITM_TRACE_EN & 1) == 0) {
+            return 0; // ITM is not enabled
+        }
+        // Write to ITM Port0 (for SWV)
+        ITM_STIMULUS_PORT0 = ptr[i];
     }
     return len;
 }
+
+
 
 void ITM_Init(void) {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable ITM and DWT
@@ -347,7 +365,8 @@ Error_Handler();
 
   HAL_StatusTypeDef status;
   
-  // Register the conversion complete callback explicitly
+  // Register the conversion complete callback explicitly is undefined, set USE_HAL_ADC_REGISTER_CALLBACKS to 1U in Core/inc/stm32h7xx_hal_conf.h
+  // If HAL_ADC_CONVERSION_COMPLETE_CB_ID
   status = HAL_ADC_RegisterCallback(&hadc1,  HAL_ADC_CONVERSION_COMPLETE_CB_ID, HAL_ADC_ConvCpltCallback);
   
   if (status != HAL_OK)
@@ -469,6 +488,14 @@ Error_Handler();
   */
 void SystemClock_Config(void)
 {
+
+  // Ensure that this clock frequency matches your clock setup
+  extern uint32_t SystemCoreClock;
+  SystemCoreClock = 400000000;  // 400 MHz for STM32H7
+
+
+
+
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -804,7 +831,7 @@ static void MX_SPI2_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 1-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 4200-1;
+  htim1.Init.Period = 10000-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -846,7 +873,9 @@ static void MX_SPI2_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
+  
+  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
+  
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -976,7 +1005,7 @@ static void MX_TIM2_Init(void)
   htim8.Instance = TIM8;
   htim8.Init.Prescaler = 1-1;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 4200-1;
+  htim8.Init.Period = 10000-1;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -1033,7 +1062,7 @@ static void MX_TIM2_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -1049,6 +1078,7 @@ static void MX_TIM2_Init(void)
   
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim8);  // Force the main output enable for TIM8
+
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);

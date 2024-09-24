@@ -38,6 +38,8 @@ extern "C" {
 #include <deque>
 #include <numeric>
 
+#define MICROSECONDS_PER_ITERATION (500)
+
 class OffsetEstimator 
 {
 public:
@@ -215,6 +217,8 @@ class StepperMotor
     void move(float target = NOT_SET);             // was override;
 
 
+    void update_target_rad_per_sec(float rps);
+    void control_loop_25us();
 
 
     //-------------------------------------------------------------------------
@@ -273,6 +277,7 @@ class StepperMotor
 
     bool is_clockwise();
 
+    float calculate_velocity(float current_angle, float delta_seconds);
     
 
   private:
@@ -480,6 +485,7 @@ class StepperMotor
 
     LowPassFilter       m_LPF_velocity;            //!<  parameter determining the velocity Low pass filter configuration
     LowPassFilter       m_LPF_angle;               //!<  parameter determining the angle low pass filter configuration
+    LowPassFilter       m_LPF_back_emf;
 
    // unsigned int        m_motion_downsample;       //!< parameter defining the ratio of downsampling for move commad
    // unsigned int        m_motion_cnt;              //!< counting variable for downsampling for move commad
@@ -516,6 +522,9 @@ class StepperMotor
     float               m_lofactor_a;
     float               m_hifactor_b;
     float               m_lofactor_b;
+
+    float               m_mechanical_rps_cmd;
+    float               m_target_voltage_q;
 };
 
 
