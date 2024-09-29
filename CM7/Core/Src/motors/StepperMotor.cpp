@@ -17,6 +17,13 @@
 
 #include <limits>
 
+
+extern "C" {
+    extern void update_buffers(uint16_t new_angle, uint32_t new_timestamp);
+    extern float calculate_velocity_from_buffer(void);
+}
+
+
 volatile float g_shaft_angle = 1.1f;
 volatile float g_mag_flux_linkage_q = 3.3f;
 
@@ -46,7 +53,6 @@ volatile float g_amperage_q(0.0f);
 volatile float g_pre_clamp_v(0.0f);
 volatile float g_post_clamp_v(0.0f);
 volatile float g_radian_advance_electrical(0.0f);
-volatile float g_smooth_target_electrical_radians(0.0f);
 //volatile unsigned long g_us(0);
 
 volatile float g_target_rad_per_sec(0.0f);
@@ -59,6 +65,11 @@ volatile unsigned long g_microseconds(0);
 volatile float g_raw_velocity(0.0f);
 volatile float g_raw_angle(0.0f);
 volatile float g_delta_angle(0.0f);
+volatile float g_new_shaft_angle(0.0f);
+volatile float g_new_rad_per_sec(0.0f);
+volatile int32_t g_new_int_velocity(0.0f);
+volatile uint16_t g_count(0);
+
 
 // Example usage
 #if 0
@@ -167,6 +178,7 @@ StepperMotor::StepperMotor(SPI_HandleTypeDef* hspi,
 ,   m_target_prev_timestamp(0l)
 ,   m_feed_forward_velocity(0.0f)
 ,   m_shaft_angle(0.0f)
+,   m_shaft_rad_per_sec(0.0f)
 ,   m_omega_mechanical_rps(0.0f)
 ,   m_current_sp(0.0f)
 ,   m_shaft_velocity_target(0.0f)
@@ -414,7 +426,7 @@ bool  StepperMotor::initFOC()
     bool success(true);
 
 
-    m_sensor.get_diagnostic(); // dummy read
+  //  m_sensor.get_diagnostic(); // dummy read
   
     m_motor_status = FOC_MOTOR_STATUS::UNCALIBRATED;
 
@@ -1123,7 +1135,7 @@ void StepperMotor::loopFOC(float winding_amperage_a, float winding_amperage_b)
     
     m_sensor.update();
 
-    m_shaft_angle = get_filtered_shaft_angle(); // <-----why here?
+   // m_shaft_angle = get_filtered_shaft_angle(); // <-----why here?
 
     g_shaft_angle = m_shaft_angle;
 
@@ -1423,6 +1435,276 @@ float smooth(float current_value, float previous_value, float alpha)
     // Apply smoothing: blend current and previous values
     return (alpha * current_value) + ((1.0f - alpha) * previous_value);
 }
+
+
+
+
+// Initialize the velocity context
+void StepperMotor::init_velocity_context(VelocityContext *context, uint16_t initial_read) {
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        context->angle_buffer[i] = initial_read;  // Initialize with the same value
+        context->time_buffer[i] = 0;
+    }
+    context->buffer_index = 0;
+    context->buffer_count = 0;
+}
+
+#if 0 // 9/27
+// Function to compute velocity in fixed-point format (scaled by 2^24)
+int32_t StepperMotor::compute_velocity_moving_window(VelocityContext *context, uint16_t current_read, uint32_t time_delta_us) {
+    int32_t angle_diff_total = 0;
+    uint32_t time_total_us = 0;
+    int32_t velocity;
+
+    // Get the previous encoder reading from the buffer
+    uint16_t previous_read = context->angle_buffer[context->buffer_index];
+
+    // Handle wrapping of the encoder
+    int32_t angle_diff;
+    if (current_read >= previous_read) {
+        angle_diff = current_read - previous_read;
+    } else {
+        angle_diff = (AS5048_MAX - previous_read) + current_read;
+    }
+
+    // Update the circular buffer with the new reading and time delta
+    context->angle_buffer[context->buffer_index] = current_read;
+    context->time_buffer[context->buffer_index] = time_delta_us;
+
+    // Move the buffer index forward (circularly)
+    context->buffer_index = (context->buffer_index + 1) % BUFFER_SIZE;
+
+    // Ensure buffer is filled before calculating velocity
+    if (context->buffer_count < BUFFER_SIZE) {
+        context->buffer_count++;
+    }
+
+    // Accumulate angle difference and time over the buffer
+    for (int i = 0; i < context->buffer_count; i++) {
+        // Calculate the total angular difference
+        int next_index = (context->buffer_index + i) % BUFFER_SIZE;
+        int previous_index = (next_index == 0) ? BUFFER_SIZE - 1 : next_index - 1;
+
+        if (context->angle_buffer[next_index] >= context->angle_buffer[previous_index]) {
+            angle_diff_total += context->angle_buffer[next_index] - context->angle_buffer[previous_index];
+        } else {
+            angle_diff_total += (AS5048_MAX - context->angle_buffer[previous_index]) + context->angle_buffer[next_index];
+        }
+
+        // Accumulate the time difference
+        time_total_us += context->time_buffer[next_index];
+    }
+
+    // Convert accumulated angle difference to radians (scaled by 2^24)
+    int32_t accumulated_angle_radians_scaled = angle_diff_total * PI_SCALING / AS5048_MAX;
+
+    // Calculate velocity (angle difference in radians divided by total time in seconds)
+    if (time_total_us > 0) {
+        velocity = (accumulated_angle_radians_scaled * US_TO_SEC_SCALING) / time_total_us;
+    } else {
+        velocity = 0;  // Avoid division by zero
+    }
+
+    return velocity;  // Scaled velocity value (scaled by 2^24)
+}
+#endif
+
+#if 0
+void StepperMotor::sample_as5048_25us()
+{
+    const float FIXED_POINT_SCALING (16777216.0f);  // 2^24 as a float
+
+        
+    static bool          first_time_through = true;  
+    static unsigned long prev_us(0UL);
+    volatile unsigned long        delta_us(0UL);
+
+    unsigned long now_us       = _micros();
+    if (now_us < prev_us) 
+    {
+        // Assuming 32-bit counter with 2^32-1 limit for unsigned long
+        delta_us = (0xFFFFFFFF - prev_us) + now_us + 1;
+    } 
+    else 
+    {
+        delta_us = now_us - prev_us;
+    }
+
+    prev_us = now_us;
+
+
+    if(first_time_through)
+    {
+       first_time_through = false;
+
+       uint16_t count = static_cast<uint16_t>(m_sensor.get_raw_count());
+
+       init_velocity_context(&m_velocity_context, count);
+    }
+    else
+    {
+#if 1
+
+        uint16_t curr_count = static_cast<uint16_t>(m_sensor.get_raw_count());
+
+        g_new_shaft_angle = convert_count_to_shaft_angle(curr_count);
+        
+        int32_t  velocity   = compute_velocity_moving_window(&m_velocity_context, curr_count, delta_us);
+        g_new_int_velocity = velocity;
+
+        g_new_rad_per_sec = static_cast<float>(velocity)/ FIXED_POINT_SCALING;
+        
+        g_raw_velocity = m_shaft_rad_per_sec;  
+        //m_sensor.set_prev_radians_per_sec(m_shaft_rad_per_sec);
+
+#if 1
+        m_shaft_angle  = get_filtered_shaft_angle();
+        m_shaft_rad_per_sec = calculate_velocity(m_shaft_angle, 0.000025f*4.0f);
+#endif
+
+        
+#endif
+    }
+}
+#endif
+
+//void delayMicroseconds(uint32_t us) {
+//    uint32_t start = __HAL_TIM_GET_COUNTER(&htimX);  // Start the timer
+//    while ((__HAL_TIM_GET_COUNTER(&htimX) - start) < us);  // Wait until the time has passed
+//}
+
+
+
+
+#if 0  // modify to start async conversion 
+void StepperMotor::sample_as5048_25us()
+{    
+    //if (async_read_complete())
+   // {
+     //  m_sensor.read_register_async(value_of(AS5048A_REGISTERS::ANGLE_14_BITS) );
+    //}
+    m_sensor.request_raw_count();
+}
+#endif
+
+
+
+
+#if 1 // disabled sun 9/29
+void StepperMotor::sample_as5048_25us()
+{
+ //--- start
+    
+    
+    const float FIXED_POINT_SCALING (16777216.0f);  // 2^24 as a float
+    static bool          first_time_through = true;  
+
+
+if(first_time_through)
+{
+   first_time_through = false;
+
+   uint16_t count = static_cast<uint16_t>(m_sensor.get_raw_count());
+
+   init_velocity_context(&m_velocity_context, count);
+}
+else
+{
+ 
+    uint16_t curr_count = static_cast<uint16_t>(m_sensor.get_raw_count());
+    //delayMicroseconds(10);
+    g_count = curr_count;
+  #if 0  
+    g_new_shaft_angle = convert_count_to_shaft_angle(curr_count);
+
+    int32_t  velocity   = compute_velocity_moving_window(&m_velocity_context, curr_count, delta_us);
+    g_new_int_velocity = velocity;
+    
+    g_new_rad_per_sec = static_cast<float>(velocity)/ FIXED_POINT_SCALING;
+    
+    g_raw_velocity = m_shaft_rad_per_sec;  
+    //m_sensor.set_prev_radians_per_sec(m_shaft_rad_per_sec);
+#endif
+    
+}
+//--- end
+
+    static unsigned long my_prev_microseconds(0);
+    unsigned long now_us       = _micros();
+    
+    //unsigned long my_microseconds = now_us - my_prev_microseconds;
+    
+    unsigned long my_microseconds(0UL);
+    // Check for counter rollover
+    if (now_us < my_prev_microseconds) 
+    {
+        // Assuming 32-bit counter with 2^32-1 limit for unsigned long
+        my_microseconds = (0xFFFFFFFF - my_prev_microseconds) + now_us + 1;
+    } 
+    else 
+    {
+        my_microseconds = now_us - my_prev_microseconds;
+    }
+
+    my_prev_microseconds          = now_us;
+
+
+    float delta_seconds              = static_cast<float>(my_microseconds)
+                               * 0.000001f;
+
+    m_shaft_angle  = get_filtered_shaft_angle();
+
+    // Step 2: Calculate the velocity from the filtered angle
+    m_shaft_rad_per_sec = calculate_velocity(m_shaft_angle, delta_seconds);
+    g_raw_velocity = m_shaft_rad_per_sec;
+}
+#endif
+
+
+
+
+#if 0 // works
+void StepperMotor::sample_as5048_25us()
+{
+    static uint32_t count=0;
+
+    if(++count > 3)
+    {
+    count = 0;    
+    static unsigned long my_prev_microseconds(0);
+    unsigned long now_us       = _micros();
+    
+    //unsigned long my_microseconds = now_us - my_prev_microseconds;
+    
+    unsigned long my_microseconds(0UL);
+    // Check for counter rollover
+    if (now_us < my_prev_microseconds) 
+    {
+        // Assuming 32-bit counter with 2^32-1 limit for unsigned long
+        my_microseconds = (0xFFFFFFFF - my_prev_microseconds) + now_us + 1;
+    } 
+    else 
+    {
+        my_microseconds = now_us - my_prev_microseconds;
+    }
+
+    my_prev_microseconds          = now_us;
+
+
+    //float delta_seconds              = static_cast<float>(my_microseconds)
+    //                           * 0.000001f;
+
+    m_shaft_angle  = get_filtered_shaft_angle();
+
+    // Step 2: Calculate the velocity from the filtered angle
+    m_shaft_rad_per_sec = calculate_velocity(m_shaft_angle, 0.000025f*4.0f);
+    g_raw_velocity = m_shaft_rad_per_sec;
+    }
+}
+#endif 
+
+
+
 unsigned long prev_us = 0;
 void StepperMotor::control_loop_25us()
 {
@@ -1453,15 +1735,13 @@ void StepperMotor::control_loop_25us()
     float target_electrical_radians = _normalizeAngle(current_electrical_angle + radian_advance_electrical);
     
     // Smooth the target electrical radians
-    float smooth_target_electrical_radians = smooth(target_electrical_radians, current_electrical_angle, 0.5f);
 
     // Smooth the q-axis voltage
     m_voltage.q = smooth_voltage_adjustment(m_voltage.q, m_target_voltage_q, 0.3f, delta_seconds);
 
     // Apply the phase voltages via PWM
-    setPhaseVoltage(m_voltage.q, m_voltage.d, smooth_target_electrical_radians);
-
-    g_smooth_target_electrical_radians = smooth_target_electrical_radians;
+    //float smooth_target_electrical_radians = smooth(target_electrical_radians, current_electrical_angle, 0.1f);
+    setPhaseVoltage(m_voltage.q, m_voltage.d, target_electrical_radians); //smooth_target_electrical_radians);
     
 }
 
@@ -1737,7 +2017,8 @@ float StepperMotor::calculate_velocity(float current_angle, float delta_seconds)
 {
     static float previous_angle = 0.0f;
 
-    float delta_angle = current_angle - previous_angle;
+    //float delta_angle = current_angle - previous_angle;
+    double delta_angle = static_cast<double>(current_angle) - static_cast<double>(previous_angle);
 
     if(fabs(delta_angle) > M_PI)
     {
@@ -1752,12 +2033,12 @@ float StepperMotor::calculate_velocity(float current_angle, float delta_seconds)
         }
     }
 
-    float velocity = delta_angle / delta_seconds;
+    //float velocity = delta_angle / delta_seconds;
+    double velocity = delta_angle / static_cast<double>(delta_seconds);
 
     previous_angle = current_angle;
     
     g_delta_angle = delta_angle;
-    g_raw_angle   = current_angle;
     
     return velocity;
 }
@@ -1778,10 +2059,24 @@ void StepperMotor::update_speed_closed_loop(float target_rad_per_sec, float delt
     }
 
     // Step 0: compute delta T
-    
+ #if 0   
     static unsigned long my_prev_microseconds(0);
     unsigned long now_us       = _micros();
-    unsigned long my_microseconds = now_us - my_prev_microseconds;
+    
+    //unsigned long my_microseconds = now_us - my_prev_microseconds;
+    
+    unsigned long my_microseconds(0UL);
+    // Check for counter rollover
+    if (now_us < my_prev_microseconds) 
+    {
+        // Assuming 32-bit counter with 2^32-1 limit for unsigned long
+        my_microseconds = (0xFFFFFFFF - my_prev_microseconds) + now_us + 1;
+    } 
+    else 
+    {
+        my_microseconds = now_us - my_prev_microseconds;
+    }
+
     my_prev_microseconds          = now_us;
 
 
@@ -1795,11 +2090,15 @@ void StepperMotor::update_speed_closed_loop(float target_rad_per_sec, float delt
                                * 0.000001f;
 
     // Step 1: Filter the shaft angle
-    float raw_angle = m_sensor.read_angle_radians();
-  
+    //float raw_angle = m_sensor.read_angle_radians();
+    float raw_angle = get_filtered_shaft_angle();
 
     // Step 2: Calculate the velocity from the filtered angle
     float raw_velocity = calculate_velocity(raw_angle, delta_seconds);  // Derivative of filtered angle
+#endif
+    float raw_velocity = m_shaft_rad_per_sec;
+    //float raw_velocity = m_sensor.calculate_velocity_from_buffer();
+
 
     float filtered_velocity = m_LPF_velocity(raw_velocity);
 
@@ -1834,10 +2133,10 @@ void StepperMotor::update_speed_closed_loop(float target_rad_per_sec, float delt
 
    // g_filtered_angle    = filtered_angle;
     g_filtered_velocity = filtered_velocity;
-    g_raw_velocity      = raw_velocity;
+    //g_raw_velocity      = m_shaft_rad_per_sec;
     g_filtered_back_emf = filtered_back_emf;
-    g_microseconds      = my_microseconds;
-    g_raw_angle         = raw_angle;
+    //g_microseconds      = my_microseconds;
+    g_raw_angle         = m_shaft_angle;
 }
 
 
@@ -2423,6 +2722,28 @@ float StepperMotor::get_filtered_shaft_angle()
     return  radians - m_sensor_offset;
 
 }
+
+float StepperMotor::convert_count_to_shaft_angle(uint16_t count)
+{
+    const uint16_t COUNTS_PER_REVOLUTION(0x4000);
+    
+    float radians = TWO_PI
+                  * static_cast<float>(count)
+                  / static_cast<float>(COUNTS_PER_REVOLUTION);
+    
+    float result = (m_sensor.invert_output())
+                 ? -radians 
+                 :  radians; 
+
+    if(Direction::CCW == m_sensor_direction)
+    {
+       radians *= -1.0f;
+    }
+
+    // m_sensor_offset is currently 0
+    return  radians - m_sensor_offset;
+}
+
 
 //-----------------------------------------------------------------------------
 //                         shaft_radians_per_second

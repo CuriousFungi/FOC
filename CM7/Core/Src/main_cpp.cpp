@@ -40,7 +40,6 @@ extern "C" {
 #include "stm32h7xx_hal_hsem.h"
 #include "stm32h7xx_hal_flash_ex.h"
 
-
 #ifdef __cplusplus
 }
 #endif
@@ -199,6 +198,12 @@ void update_ramp(void)
 }
 
 extern "C"
+void timestamp_angle_reading(void)
+{
+    stepper.timestamp_angle_reading();
+}
+
+extern "C"
 void wrapper_control_loop_25us(void)
 {
     
@@ -208,6 +213,16 @@ void wrapper_control_loop_25us(void)
     }
 }
 
+
+extern "C"
+void wrapper_sample_as5048_25us(void)
+{
+    if(is_foc_initialized)
+    {
+       stepper.sample_as5048_25us();
+    }
+
+}
 
 extern "C"
 void foc_iteration(void)
@@ -295,6 +310,54 @@ void foc_iteration(void)
     }
 }
 
+#if 0
+void StepperMotor::process_encoder_data()
+{
+    static uint32_t last_timestamp = 0;
+    
+    if (read_ready)  // Ensure SPI read is complete
+    {
+        uint32_t current_timestamp = _micros();
+        uint32_t delta_time_us = current_timestamp - last_timestamp;
+
+        if (delta_time_us > MINIMUM_TIME_INTERVAL)  // Ensure enough time has passed
+        {
+            // Get the most recent angle
+            uint16_t current_angle = angle_buffer[current_index];
+
+            // Calculate velocity using delta angle and delta time
+            float delta_angle = calculate_delta_angle(last_angle, current_angle);
+            float delta_time_s = static_cast<float>(delta_time_us) * 0.000001f;
+
+            // Compute velocity
+            float velocity = delta_angle / delta_time_s;
+
+            // Apply optional filtering
+            filtered_velocity = m_LPF_velocity(velocity);
+
+            // Update PID control or other feedback mechanism
+            float velocity_error = target_rad_per_sec - filtered_velocity;
+            float velocity_correction = m_PID_velocity.update(velocity_error);
+
+            // Update control outputs or system state
+            set_motor_speed(target_rad_per_sec + velocity_correction);
+
+            // Store the last angle and timestamp for the next loop
+            last_angle = current_angle;
+            last_timestamp = current_timestamp;
+        }
+        
+        read_ready = false;  // Reset read flag
+    }
+}
+#endif
+
+extern "C"
+void complete_spi_conversion()
+{
+       	stepper.conversion_complete();
+}
+
 
 extern "C"
 void cpp_main(void)
@@ -360,6 +423,14 @@ void cpp_main(void)
           foc_iteration();
           prev_time = curr_time;
           g_us = elapsed_time;
+
+          if (stepper.async_read_complete())
+          {
+             stepper.process_encoder_data();
+          }
+
+
+          
       }
   }
 }
