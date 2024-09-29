@@ -4,6 +4,9 @@
 
 #include <cstdint>
 
+#define SPI_BUFFER_SIZE 8
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +90,23 @@ class AS5048A
 
     float read_angle_radians();
     void  invert_output(bool invert);
+  bool     invert_output(){return m_invert_output;} // Temporary bridge
+
+  uint16_t get_raw_count();
+  void set_prev_radians_per_sec(float val);
+  void conversion_complete();
+  void read_register_async(uint16_t reg_address);
+  float calculate_velocity_from_buffer(void);
+  void update_buffers(uint16_t new_angle, uint32_t new_timestamp);
+  void init_SPI_buffers(void);
+  void process_encoder_data();
+  float calculate_delta_angle(uint16_t last_angle, uint16_t current_angle);
+  void timestamp(){m_timestamp_buffer[m_current_index] = DWT->CYCCNT / 84; } // _micros();
+  bool async_read_complete(){return m_async_read_complete;}
+  bool request_raw_count();
+  uint16_t get_current_raw_count();
+  uint16_t blocking_get_raw_count();
+
 
   private:
 
@@ -105,7 +125,7 @@ class AS5048A
     };
 
     uint16_t read_register(uint16_t reg_address);
-    uint32_t get_raw_count();
+
     int16_t  get_counts_advanced_past_position();
 
     uint16_t write_register(uint16_t registerAddress, uint16_t data);
@@ -129,6 +149,7 @@ class AS5048A
     const uint16_t     SPI_READ_ANGLE_CMD;
     const uint16_t     COUNTS_PER_REVOLUTION;
     const uint16_t     COUNTS_PER_HALF_REVOLUTION;
+    const uint16_t     AS5048_MAX;
     
     SPI_HandleTypeDef* m_hspi;                // SPI handle
     GPIO_TypeDef*      m_p_chip_select_port;
@@ -154,6 +175,14 @@ class AS5048A
 
     uint32_t           m_prev_microseconds;
     bool               m_invert_output;
+    bool               m_async_read_complete;
+    uint16_t           m_register_value;
+    unsigned long      m_timestamp_buffer[SPI_BUFFER_SIZE];
+    uint16_t           m_angle_buffer[SPI_BUFFER_SIZE];
+
+    uint8_t            m_current_index;  // Index to track the circular buffer
+
+    
 };
 
 

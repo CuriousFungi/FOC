@@ -25,6 +25,7 @@ protected:
     
     unsigned long timestamp_prev;  //!< Last execution timestamp
     float         y_prev;          //!< filtered value in previous execution step 
+    bool          initialized;
 };
 
 #endif // LOWPASS_FILTER_H

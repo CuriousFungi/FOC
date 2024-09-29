@@ -38,6 +38,24 @@ extern "C" {
 #include <deque>
 #include <numeric>
 
+#define MICROSECONDS_PER_ITERATION (500)
+
+
+// move to sensor
+//#define AS5048_MAX 16384            // 14-bit encoder max value (2^14)
+#define PI_SCALING (13176795)       // Approximation of 2*pi * (2^24) to maintain precision
+#define US_TO_SEC_SCALING (1000000) // Convert microseconds to seconds for velocity calculation
+#define BUFFER_SIZE 10              // Circular buffer size for moving window
+
+typedef struct {
+    uint16_t angle_buffer[BUFFER_SIZE];  // Circular buffer to store previous encoder readings
+    uint32_t time_buffer[BUFFER_SIZE];   // Circular buffer to store corresponding time deltas
+    uint8_t buffer_index;                // Current index in the circular buffer
+    uint8_t buffer_count;                // Number of valid entries in the buffer
+} VelocityContext;
+
+
+
 class OffsetEstimator 
 {
 public:
@@ -259,8 +277,17 @@ class StepperMotor
     void move(float target = NOT_SET);             // was override;
 
 
-
-
+    void update_target_rad_per_sec(float rps);
+    void control_loop_25us();
+    void sample_as5048_25us();
+    void init_velocity_context(VelocityContext *context, uint16_t initial_read);
+    //int32_t compute_velocity_moving_window(VelocityContext *context, uint16_t current_read, uint32_t time_delta_us);
+    float convert_count_to_shaft_angle(uint16_t count);
+    float calculate_delta_angle(uint16_t last_angle, uint16_t current_angle);
+    void conversion_complete(){m_sensor.conversion_complete();}
+    void process_encoder_data(){m_sensor.process_encoder_data();}
+    void timestamp_angle_reading(){m_sensor.timestamp();}
+    bool async_read_complete(){return m_sensor.async_read_complete();}
     //-------------------------------------------------------------------------
     //                        getSensorAngle_Radians
     //-------------------------------------------------------------------------
@@ -317,6 +344,7 @@ class StepperMotor
 
     bool is_clockwise();
 
+    float calculate_velocity(float current_angle, float delta_seconds);
     
 
   private:
@@ -469,6 +497,7 @@ class StepperMotor
     unsigned long       m_target_prev_timestamp;
     float               m_feed_forward_velocity;   // TODO: this isn't really used
     float               m_shaft_angle;             //!< current motor angle
+    float               m_shaft_rad_per_sec;
     float               m_omega_mechanical_rps;          //!< current motor velocity 
 
     float               m_current_sp;              //!< target current ( q current )
@@ -524,6 +553,7 @@ class StepperMotor
 
     LowPassFilter       m_LPF_velocity;            //!<  parameter determining the velocity Low pass filter configuration
     LowPassFilter       m_LPF_angle;               //!<  parameter determining the angle low pass filter configuration
+    LowPassFilter       m_LPF_back_emf;
 
    // unsigned int        m_motion_downsample;       //!< parameter defining the ratio of downsampling for move commad
    // unsigned int        m_motion_cnt;              //!< counting variable for downsampling for move commad
@@ -560,6 +590,10 @@ class StepperMotor
     float               m_lofactor_a;
     float               m_hifactor_b;
     float               m_lofactor_b;
+
+    float               m_mechanical_rps_cmd;
+    float               m_target_voltage_q;
+    VelocityContext     m_velocity_context;
 };
 
 

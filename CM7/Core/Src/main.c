@@ -31,6 +31,10 @@
 
 //#include "stm32h755xx.h"
 #define TIM1_UP_TIM16_IRQn       ((IRQn_Type)25)  // Example IRQ number, actual value may vary
+#define AS5048_READ_SIZE 2  // AS5048 sensor returns 16-bit data (2 bytes)
+
+uint16_t as5048_read_buffer;  // 16-bit buffer for storing the angle data
+float filtered_velocity = 0.0f;  // Store filtered velocity value
 
 
 #ifdef __cplusplus
@@ -39,7 +43,11 @@ extern "C" {
 
 void cpp_main(void);
 void foc_iteration(void);      
+void wrapper_control_loop_25us(void);
+void wrapper_sample_as5048_25us(void);
+
 void RefreshWatchdog(void);
+void complete_spi_conversion(void);
 
 
 #ifdef __cplusplus
@@ -102,12 +110,41 @@ int __io_putchar(int ch)
   return ch;
 }
 
+
+
+
+
+
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi == &hspi2)
+    {
+    	complete_spi_conversion();
+    }
+}
+
+
+
 // Implement the callback function
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM1)  // Check if the callback is triggered by TIM1
     {
-        foc_iteration();  // Call your FOC loop function
+      //  foc_iteration();  // Call your FOC loop function
+      //wrapper_control_loop_25us();
+
+      
+      //wrapper_sample_as5048_25us();
+      // Initiate non-blocking SPI read
+      HAL_SPI_Receive_IT(&hspi2, (uint8_t *)&as5048_read_buffer, AS5048_READ_SIZE);
+
+       // Log timestamp for velocity calculation
+       timestamp_angle_reading();
+    }
+    else if (htim->Instance == TIM8) 
+    {
+       //wrapper_sample_as5048_25us();
+       wrapper_control_loop_25us();
     }
 }
 
@@ -234,12 +271,23 @@ HAL_StatusTypeDef Start_DAC_DMA(void)
 
 
 #if 1
+// Define ITM port 0 register address for printf redirection
+#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
+#define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
+
 int _write(int file, char *ptr, int len) {
     for (int i = 0; i < len; i++) {
-        ITM_SendChar(ptr[i]);
+        // Wait until ITM is enabled
+        if ((ITM_TRACE_EN & 1) == 0) {
+            return 0; // ITM is not enabled
+        }
+        // Write to ITM Port0 (for SWV)
+        ITM_STIMULUS_PORT0 = ptr[i];
     }
     return len;
 }
+
+
 
 void ITM_Init(void) {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable ITM and DWT
@@ -347,7 +395,8 @@ Error_Handler();
 
   HAL_StatusTypeDef status;
   
-  // Register the conversion complete callback explicitly
+  // Register the conversion complete callback explicitly is undefined, set USE_HAL_ADC_REGISTER_CALLBACKS to 1U in Core/inc/stm32h7xx_hal_conf.h
+  // If HAL_ADC_CONVERSION_COMPLETE_CB_ID
   status = HAL_ADC_RegisterCallback(&hadc1,  HAL_ADC_CONVERSION_COMPLETE_CB_ID, HAL_ADC_ConvCpltCallback);
   
   if (status != HAL_OK)
@@ -371,6 +420,9 @@ Error_Handler();
   MX_TIM2_Init();
   MX_WWDG1_Init();
   /* USER CODE BEGIN 2 */
+
+
+
 
 
   // Enable the cycle counter
@@ -407,11 +459,19 @@ Error_Handler();
 
   MX_TIM8_Init();
 
-    __HAL_RCC_TIM8_CLK_ENABLE();
+   // __HAL_RCC_TIM8_CLK_ENABLE(); redundant
 
-  status = HAL_TIM_Base_Start(&htim8);
+  //status = HAL_TIM_Base_Start(&htim8);
+  //if(HAL_OK != status) { Error_Handler(); }
 
-  if(HAL_OK != status) { Error_Handler(); }
+  // Start the timer in interrupt mode after initialization
+  status =  HAL_TIM_Base_Start_IT(&htim8) ;
+  if (status != HAL_OK)
+  {
+      Error_Handler();
+  }
+
+
 
 
   // Start PWM channels on TIM8
@@ -459,6 +519,10 @@ Error_Handler();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+      // Nothing to do here; everything is handled in interrupts
+       __WFI();  // Wait for interrupt (low power)
+    
   }
   /* USER CODE END 3 */
 }
@@ -469,6 +533,14 @@ Error_Handler();
   */
 void SystemClock_Config(void)
 {
+
+  // Ensure that this clock frequency matches your clock setup
+  extern uint32_t SystemCoreClock;
+  SystemCoreClock = 400000000;  // 400 MHz for STM32H7
+
+
+
+
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -740,7 +812,8 @@ static void MX_SPI2_Init(void)
 {
 
   /* USER CODE BEGIN SPI2_Init 0 */
-
+  HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_SET);
+  
   /* USER CODE END SPI2_Init 0 */
 
   /* USER CODE BEGIN SPI2_Init 1 */
@@ -754,7 +827,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -774,7 +847,7 @@ static void MX_SPI2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI2_Init 2 */
-
+  
   /* USER CODE END SPI2_Init 2 */
 
 }
@@ -804,7 +877,7 @@ static void MX_SPI2_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 1-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 4200-1;
+  htim1.Init.Period = 10000-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -846,7 +919,9 @@ static void MX_SPI2_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
+  
+  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
+  
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -976,7 +1051,7 @@ static void MX_TIM2_Init(void)
   htim8.Instance = TIM8;
   htim8.Init.Prescaler = 1-1;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 4200-1;
+  htim8.Init.Period = 10000-1;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -984,25 +1059,31 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  
   if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
   }
+  
   if (HAL_TIM_OC_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
   }
+  
   sSlaveConfig.SlaveMode = TIM_SLAVEMODE_DISABLE;
   sSlaveConfig.InputTrigger = TIM_TS_ITR0;
+  
   if (HAL_TIM_SlaveConfigSynchro(&htim8, &sSlaveConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC3REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
@@ -1010,6 +1091,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
@@ -1021,19 +1103,22 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  
   if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
+  
   sConfigOC.OCMode = TIM_OCMODE_TIMING;
   if (HAL_TIM_OC_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_6) != HAL_OK)
   {
     Error_Handler();
   }
+  
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -1046,9 +1131,28 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM8_Init 2 */
+
+// new
+  // Manually enable interrupt after setting up the timer
+  __HAL_TIM_ENABLE_IT(&htim8, TIM_IT_UPDATE);  // Enable update interrupt for TIM8
+
+
+
+  // Start the timer in interrupt mode after initialization
+ // if (HAL_TIM_Base_Start_IT(&htim8) != HAL_OK)
+  //{
+  //    Error_Handler();
+ // }
+
+
   
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim8);  // Force the main output enable for TIM8
+
+
+  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
+
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);

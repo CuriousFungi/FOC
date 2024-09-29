@@ -40,7 +40,6 @@ extern "C" {
 #include "stm32h7xx_hal_hsem.h"
 #include "stm32h7xx_hal_flash_ex.h"
 
-
 #ifdef __cplusplus
 }
 #endif
@@ -108,6 +107,7 @@ volatile float g_centered_voltage_a_absp925(0.0f);
 
 volatile float g_adc_to_voltage_b_0_5 (0.0f);
 volatile float g_centered_voltage_b_absp925(0.0f);
+volatile unsigned long g_us(0);
 
 
 StepperMotor stepper = StepperMotor(
@@ -186,21 +186,42 @@ winding_currents udpate_amperage(void)
             
 }
 volatile float g_cmd_rps(0.0f);
+static float rps = 0.0f;
 void update_ramp(void)
 {
-   static float rps = 0.0f;
-   static int   cnt = 0;
-
-   if (++cnt > 2000)
-   {
-     cnt = 0;
-     if (rps < 30.0f)
+     if (rps < 50.0f)
      {
-        rps += 0.1f;
+        rps += 0.0002f;
         g_cmd_rps = rps;
-        stepper.move(rps);
+        stepper.update_target_rad_per_sec(rps);
      }
-   }
+}
+
+extern "C"
+void timestamp_angle_reading(void)
+{
+    stepper.timestamp_angle_reading();
+}
+
+extern "C"
+void wrapper_control_loop_25us(void)
+{
+    
+    if(is_foc_initialized)
+    {
+        stepper.control_loop_25us();
+    }
+}
+
+
+extern "C"
+void wrapper_sample_as5048_25us(void)
+{
+    if(is_foc_initialized)
+    {
+       stepper.sample_as5048_25us();
+    }
+
 }
 
 extern "C"
@@ -208,17 +229,22 @@ void foc_iteration(void)
 {
     RefreshWatchdog();
     
-    if(is_foc_initialized)
+    if(!is_foc_initialized)
+    {
+        rps = 0.0f;
+    }
+    else
     {  
-      winding_currents result = udpate_amperage();
-      stepper.loopFOC(result.winding_amperage_a, result.winding_amperage_b);
-      update_ramp();
+        winding_currents result = udpate_amperage();
+        stepper.loopFOC(result.winding_amperage_a, result.winding_amperage_b);
+        update_ramp();
 
+#if 0
 
         // Inside your main loop or another appropriate place
         if (__HAL_DMA_GET_FLAG(&hdma_adc1, DMA_FLAG_TEIF0_4))
         {
-           // printf("DMA Transfer Error Detected.\n");
+            // printf("DMA Transfer Error Detected.\n");
             __HAL_DMA_CLEAR_FLAG(&hdma_adc1, DMA_FLAG_TEIF0_4);
         }
 
@@ -228,11 +254,7 @@ void foc_iteration(void)
             __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
             // Log or handle ADC overrun
         }
-
-
-//--------------------------
-
-
+        //--------------------------
         // Check DMA status
         volatile uint32_t dma_stream_flags = DMA1->LISR;  // Check interrupt status register for stream 0
         //printf("DMA LISR Flags: 0x%08X\n", dma_stream_flags);
@@ -248,53 +270,92 @@ void foc_iteration(void)
             //printf("ADC conversion is not active. Restart ADC-DMA.\n");
             HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_result, NUM_ADC_CHANNELS);
         }
+        //---------------------------
+        // Check the DMA stream control register (CR)
+        volatile uint32_t dma_stream_cr = DMA1_Stream0->CR; // Check the configuration of the DMA stream
+        //printf("DMA Stream Control Register (CR): 0x%08X\n", dma_stream_cr);
 
+        // Check for DMA stream enable flag
+        if (dma_stream_cr & DMA_SxCR_EN)
+        {
+            volatile int dummy2 = 0;
+            //printf("DMA Stream is enabled.\n");
+        }
+        else
+        {
+            //printf("DMA Stream is not enabled. Verify initialization and configuration.\n");
+        }
 
-//---------------------------
+        // Check for errors in DMA low interrupt status register (LISR)
+        volatile uint32_t dma_lisr = DMA1->LISR;
+        //printf("DMA LISR (Low Interrupt Status Register): 0x%08X\n", dma_lisr);
+        volatile int dummy3 = dma_lisr;
 
-// Check the DMA stream control register (CR)
-volatile uint32_t dma_stream_cr = DMA1_Stream0->CR; // Check the configuration of the DMA stream
-//printf("DMA Stream Control Register (CR): 0x%08X\n", dma_stream_cr);
+        // Re-enable DMA stream if not enabled
+        if (!(DMA1_Stream0->CR & DMA_SxCR_EN))
+        {
+            DMA1_Stream0->CR |= DMA_SxCR_EN; // Enable the stream
+            //printf("DMA Stream manually enabled.\n");
+        }
 
-// Check for DMA stream enable flag
-if (dma_stream_cr & DMA_SxCR_EN)
-{
-    volatile int dummy2 = 0;
-    //printf("DMA Stream is enabled.\n");
-}
-else
-{
-    //printf("DMA Stream is not enabled. Verify initialization and configuration.\n");
-}
+        volatile uint32_t fifo_status = DMA1_Stream0->FCR;
+        //printf("DMA FIFO Status: 0x%08X\n", fifo_status);
+        volatile int dummyA = fifo_status;
 
-// Check for errors in DMA low interrupt status register (LISR)
-volatile uint32_t dma_lisr = DMA1->LISR;
-//printf("DMA LISR (Low Interrupt Status Register): 0x%08X\n", dma_lisr);
-volatile int dummy3 = dma_lisr;
-
-
-
-// Re-enable DMA stream if not enabled
-if (!(DMA1_Stream0->CR & DMA_SxCR_EN))
-{
-    DMA1_Stream0->CR |= DMA_SxCR_EN; // Enable the stream
-    //printf("DMA Stream manually enabled.\n");
-}
-
-volatile uint32_t fifo_status = DMA1_Stream0->FCR;
-//printf("DMA FIFO Status: 0x%08X\n", fifo_status);
-volatile int dummyA = fifo_status;
-
-
-
-uint32_t nvic_iser = NVIC->ISER[0];  // Check NVIC set-enable register for correct IRQ
-//printf("NVIC ISER: 0x%08X\n", nvic_iser);
-volatile int dummyB = nvic_iser;
-
-
-//-------------------------
-      
+        uint32_t nvic_iser = NVIC->ISER[0];  // Check NVIC set-enable register for correct IRQ
+        //printf("NVIC ISER: 0x%08X\n", nvic_iser);
+        volatile int dummyB = nvic_iser;
+        //-------------------------    
+  #endif
     }
+}
+
+#if 0
+void StepperMotor::process_encoder_data()
+{
+    static uint32_t last_timestamp = 0;
+    
+    if (read_ready)  // Ensure SPI read is complete
+    {
+        uint32_t current_timestamp = _micros();
+        uint32_t delta_time_us = current_timestamp - last_timestamp;
+
+        if (delta_time_us > MINIMUM_TIME_INTERVAL)  // Ensure enough time has passed
+        {
+            // Get the most recent angle
+            uint16_t current_angle = angle_buffer[current_index];
+
+            // Calculate velocity using delta angle and delta time
+            float delta_angle = calculate_delta_angle(last_angle, current_angle);
+            float delta_time_s = static_cast<float>(delta_time_us) * 0.000001f;
+
+            // Compute velocity
+            float velocity = delta_angle / delta_time_s;
+
+            // Apply optional filtering
+            filtered_velocity = m_LPF_velocity(velocity);
+
+            // Update PID control or other feedback mechanism
+            float velocity_error = target_rad_per_sec - filtered_velocity;
+            float velocity_correction = m_PID_velocity.update(velocity_error);
+
+            // Update control outputs or system state
+            set_motor_speed(target_rad_per_sec + velocity_correction);
+
+            // Store the last angle and timestamp for the next loop
+            last_angle = current_angle;
+            last_timestamp = current_timestamp;
+        }
+        
+        read_ready = false;  // Reset read flag
+    }
+}
+#endif
+
+extern "C"
+void complete_spi_conversion()
+{
+       	stepper.conversion_complete();
 }
 
 
@@ -332,14 +393,10 @@ void cpp_main(void)
   bool success = stepper.initFOC();
   
   is_foc_initialized = success;
-  
-  if(success)
-  {
-   stepper.move(2.0f); // for closedloop velocity
-  }
+
 
   unsigned long prev_us = _micros();
-  const uint32_t MICROSECONDS_PER_ITERATION(50); // 20KHz PWM
+ // const uint32_t MICROSECONDS_PER_ITERATION(25);
   const uint32_t MICROSECONDS_PER_SECOND(1000000);
   const uint32_t ITERATIONS_PER_SECOND(MICROSECONDS_PER_SECOND/MICROSECONDS_PER_ITERATION);
   
@@ -354,25 +411,27 @@ void cpp_main(void)
   const float LSB_VALUE(
                        ( 1000.0f * ((1000.0f*V_REF) / static_cast<float>(0xFFFF)))
                       / (185.0f));
+  
 
   while (1)
   {
-    #if 0
-      unsigned long now_us = _micros();
-      if((now_us - prev_us) > MICROSECONDS_PER_ITERATION)
+      static unsigned long prev_time = 0;
+      unsigned long curr_time    = _micros();
+      unsigned long elapsed_time = curr_time - prev_time;
+      if(elapsed_time >= 500UL)  // MICROSECONDS_PER_ITERATION)
       {    
-          if(++count > 100) //ITERATIONS_PER_SECOND/4)  // 1 sec when if((now_us - prev_us) > 1000) used
+          foc_iteration();
+          prev_time = curr_time;
+          g_us = elapsed_time;
+
+          if (stepper.async_read_complete())
           {
-              count = 0;
-              if(speed_index < num_speeds)
-              {
-                  stepper.move(speeds[speed_index++]);
-              }
+             stepper.process_encoder_data();
           }
-      
-          prev_us = now_us;
+
+
+          
       }
-      #endif;
   }
 }
 
