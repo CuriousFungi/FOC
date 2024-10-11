@@ -17,6 +17,8 @@
 volatile uint16_t g_as5048_u16_angle(0);
 volatile float g_as5048_velocity(0.0f);
 
+extern volatile float g_experimental_velocity;
+
 
 #include <algorithm>
 
@@ -66,7 +68,7 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
 
 ,   m_prev_microseconds(0)
 ,   m_invert_output(false)
-,   m_async_read_complete(false)
+,   m_async_read_complete(true)
 ,   m_register_value(0)
 ,   m_current_index(0)
 {
@@ -365,7 +367,16 @@ uint16_t smoothDACOutput(uint16_t new_value)
 }
 
 
-
+float AS5048A::read_angle_radians_v2()
+{
+    float radians = TWO_PI
+                  * static_cast<float>(m_register_value)
+                  / static_cast<float>(COUNTS_PER_REVOLUTION);
+    
+    float result = (m_invert_output) 
+                 ? -radians 
+                 :  radians;
+}
 
 
 float AS5048A::read_angle_radians()
@@ -459,23 +470,10 @@ float AS5048A::convert_count_to_degrees(uint16_t count)
 
 
 void AS5048A::conversion_complete()
-{
-    uint32_t current_timestamp = _micros();
-    HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
-    
-    // Store the read angle (mask to 14-bit value from AS5048)
-     //uint16_t current_angle = as5048_read_buffer & 0x3FFF;  // Mask to get 14-bit angle
-    
-     m_register_value &= ~0xC000;  // Strip parity and error bits
-     
-    
-     // Call update_buffers to store the angle and timestamp in the circular buffer
-     //update_buffers(current_angle, current_timestamp);
-     update_buffers(m_register_value, current_timestamp);
-    
-    // Signal that the read is complete
-    // m_async_read_complete = true;  <-- already set in update_buffers
-
+{    
+    m_register_value &= ~0xC000;  // Strip parity and error bits
+         
+    update_buffers(m_register_value, _micros());
 }
 //-----------------------------------------------------------------------------
 //                          get_raw_count
@@ -637,6 +635,10 @@ return 0xBEEF;
     return register_value & ~0xC000;
 }
 
+extern "C"
+{
+    void SPI_TxRx_completion_callback(SPI_HandleTypeDef *hspi);
+}
 
 // Function to initiate the SPI read
 void AS5048A::read_register_async(uint16_t reg_address)
@@ -645,25 +647,72 @@ void AS5048A::read_register_async(uint16_t reg_address)
     command = command | reg_address;
 
     // Add a parity bit on the MSB
-    command |= static_cast<uint16_t>(spiCalcEvenParity(command) << 0xF);
+    command |= static_cast<uint16_t>(spiCalcEvenParity(command) << 15);
 
-    const uint32_t TIMEOUT = 1000;
-
-    //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
-
-
-    // Reset the chip select pin to start communication
-    HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
-
-    // Initiate non-blocking SPI transmission
+#if 0
     HAL_SPI_TransmitReceive_IT(m_hspi, 
                                reinterpret_cast<uint8_t*>(&command),
                                reinterpret_cast<uint8_t*>(&m_register_value), 
-                               1);
-
-
-
+                               sizeof(m_register_value));   
+#else
+    if (HAL_SPI_GetState(m_hspi) == HAL_SPI_STATE_READY)
+    {
+        HAL_SPI_TransmitReceive_IT(m_hspi, 
+                                   reinterpret_cast<uint8_t*>(&command),
+                                   reinterpret_cast<uint8_t*>(&m_register_value), 
+                                   1);   
+    }
+    else
+    {
+        // SPI is busy
+    }
+#endif
                                
+}
+
+void AS5048A::async_read_angle()
+{ 
+    // reset guard conditions
+    m_async_read_complete = false; 
+
+
+    uint16_t READ_ANGLE_COMMAND(0xFFFF);
+    volatile uint16_t temp = READ_ANGLE_COMMAND;
+    
+    if (HAL_SPI_GetState(m_hspi) == HAL_SPI_STATE_READY)
+    {
+    	 __HAL_SPI_ENABLE_IT(m_hspi, (SPI_IT_RXNE | SPI_IT_ERR));
+         
+        volatile HAL_SPI_StateTypeDef state = m_hspi->State;
+        //SPI_TxRx_completion_callback(m_hspi);
+        HAL_SPI_TransmitReceive_IT(m_hspi, 
+                                   reinterpret_cast<uint8_t*>(&READ_ANGLE_COMMAND),
+                                   reinterpret_cast<uint8_t*>(&m_register_value), 
+                                   1);   
+        state = m_hspi->State;
+
+
+        if (__HAL_SPI_GET_FLAG(m_hspi, SPI_FLAG_OVR))
+        {
+            printf("SPI Overrun Error Detected\n");
+            __HAL_SPI_CLEAR_OVRFLAG(m_hspi);
+        }
+        if (__HAL_SPI_GET_FLAG(m_hspi, SPI_FLAG_MODF))
+        {
+            printf("SPI Mode Fault Error Detected\n");
+            __HAL_SPI_CLEAR_MODFFLAG(m_hspi);
+        }
+
+
+
+        
+        temp++;
+    }
+    else
+    {
+        // SPI is busy
+    	temp++;
+    }
 }
 
 void AS5048A::init_SPI_buffers(void)
@@ -688,46 +737,62 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 
     // Mark that data is ready for processing
     m_async_read_complete = true;
+
+
+    
+    g_as5048_u16_angle = new_angle;
 }
 
+float AS5048A::read_angle_radians_from_buffer()
+{
+    HAL_NVIC_DisableIRQ(SPI2_IRQn); 
+
+
+    // Check if there is valid data in the buffer
+    if (m_current_index < 1)
+    {
+        HAL_NVIC_EnableIRQ(SPI2_IRQn);
+        
+        // Return 0 if the buffer has not been populated yet
+        return 0.0f;
+    }
+
+    // The most recent angle value is at the last index in the circular buffer
+    uint16_t latest_angle_u16 = m_angle_buffer[(m_current_index - 1 + SPI_BUFFER_SIZE) % SPI_BUFFER_SIZE];
+
+    HAL_NVIC_EnableIRQ(SPI2_IRQn);
+
+
+    // Convert the 14-bit angle data to radians
+    // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
+    float angle_radians = (static_cast<float>(latest_angle_u16) * TWO_PI) / AS5048_MAX;
+
+    return angle_radians;
+}
 
 void AS5048A::process_encoder_data()
 {
-    static uint32_t last_timestamp = 0;
-    static uint16_t last_angle = 0;
+    static uint32_t prev_timestamp = 0;
+    static uint16_t prev_angle     = 0;
 
     // Retrieve current timestamp and angle
-    uint32_t current_timestamp = m_timestamp_buffer[m_current_index];
-    uint16_t current_angle = m_angle_buffer[m_current_index];
+    uint32_t curr_timestamp = m_timestamp_buffer[m_current_index];
+    uint16_t curr_angle     = m_angle_buffer[m_current_index];
 
     // Compute time difference
-    uint32_t delta_time_us = current_timestamp - last_timestamp;
-    float delta_time_s = static_cast<float>(delta_time_us) * 0.000001f;
+    uint32_t delta_time_us = curr_timestamp - prev_timestamp;
+    float    delta_time_s  = static_cast<float>(delta_time_us) * 0.000001f;
 
     // Compute angle difference (handle wrapping)
-    float delta_angle = calculate_delta_angle(last_angle, current_angle);
+    float delta_angle = calculate_delta_angle(prev_angle, curr_angle);
 
-    // Compute velocity (angle difference / time)
     float velocity = delta_angle / delta_time_s;
 
-
-    g_as5048_u16_angle = current_angle;
-    //g_as5048_velocity = velocity;
-
-
-
-    // Apply low-pass filter if necessary
- //   filtered_velocity = m_LPF_velocity(velocity);
- //   g_as5048_velocity = m_LPF_velocity(velocity);
-
-    // Call the control loop to update motor control
- //   update_control_loop(filtered_velocity);
-
-    // Store the current angle and timestamp for the next iteration
-    last_angle = current_angle;
-    last_timestamp = current_timestamp;
+    prev_angle     = curr_angle;
+    prev_timestamp = curr_timestamp;
 }
 
+#if 1
 float AS5048A::calculate_velocity_from_buffer(void)
 {
     int32_t angle_diff_total = 0;  // Accumulate total angular difference
@@ -754,12 +819,18 @@ float AS5048A::calculate_velocity_from_buffer(void)
             angle_diff += AS5048_MAX;
         }
 
-        angle_diff_total += angle_diff;
-        time_total_us += m_timestamp_buffer[current_idx] - m_timestamp_buffer[previous_idx];
+        uint32_t time_diff = m_timestamp_buffer[current_idx] 
+                           - m_timestamp_buffer[previous_idx];
+               
+        if (time_diff > 0)
+        {
+           angle_diff_total += angle_diff;
+           time_total_us    += time_diff;
+        }   
     }
 
     // Ensure we have non-zero time difference to avoid division by zero
-    if (time_total_us == 0) return 0.0f;
+    //if (time_total_us == 0) return 0.0f;
 
     // Convert the total angle difference to radians
     //float angle_diff_radians = (static_cast<float>(angle_diff_total) * 2.0f * M_PI) / AS5048_MAX;
@@ -769,10 +840,67 @@ float AS5048A::calculate_velocity_from_buffer(void)
     float time_total_seconds = (float)(time_total_us) * 1e-6f;
 
     // Calculate velocity (radians per second)
+    return angle_diff_radians / time_total_seconds;
+}
+#endif
+
+#if 0
+float AS5048A::calculate_velocity_from_buffer(void)
+{
+    int32_t angle_diff_total = 0;  // Accumulate total angular difference
+    uint32_t time_total_us = 0;    // Accumulate total time difference (in microseconds)
+
+    // Ensure at least 2 samples are available
+    if (m_current_index < 2) return 0.0f;
+
+    for (int i = 1; i < SPI_BUFFER_SIZE; i++) {
+        int current_idx = (m_current_index + i) % SPI_BUFFER_SIZE;
+        int previous_idx = (current_idx == 0) ? SPI_BUFFER_SIZE - 1 : current_idx - 1;
+
+        // Calculate angle difference (handle rollover)
+        int32_t angle_diff = m_angle_buffer[current_idx] - m_angle_buffer[previous_idx];
+
+        // Handle wrapping cases
+        if (angle_diff > AS5048_MAX / 2) {
+            angle_diff -= AS5048_MAX;
+        } else if (angle_diff < -AS5048_MAX / 2) {
+            angle_diff += AS5048_MAX;
+        }
+
+        // Accumulate angle difference and time difference
+        angle_diff_total += angle_diff;
+
+        uint32_t time_diff = m_timestamp_buffer[current_idx] - m_timestamp_buffer[previous_idx];
+        
+        if (time_diff <= 0) {
+            // Debugging: Invalid timestamp difference
+            return 0.0f;
+        }
+
+        time_total_us += time_diff;
+    }
+
+    // Ensure we have non-zero time difference to avoid division by zero
+    if (time_total_us == 0) return 0.0f;
+
+    // Convert angle difference to radians
+    float angle_diff_radians = static_cast<float>(angle_diff_total) * 2.0f * M_PI / AS5048_MAX;
+
+    // Convert time difference to seconds
+    float time_total_seconds = static_cast<float>(time_total_us) * 1e-6f;
+
+    // Calculate velocity (radians per second)
     float rad_per_sec = angle_diff_radians / time_total_seconds;
-    g_as5048_velocity = rad_per_sec;
+
+    // Optional: Debugging printouts
+    // printf("Angle Diff: %f, Time Diff: %f, Velocity: %f\n", angle_diff_radians, time_total_seconds, rad_per_sec);
+
     return rad_per_sec;
 }
+#endif
+
+
+
 
 
 bool AS5048A::request_raw_count()
@@ -814,16 +942,16 @@ uint16_t AS5048A::get_raw_count()
 
     //if(m_async_read_complete)
     {
-	   m_async_read_complete = false;  // Reset the flag
+//	   m_async_read_complete = false;  // Reset the flag
 
        // Initiate the SPI read
-       read_register_async(value_of(AS5048A_REGISTERS::ANGLE_14_BITS) );  // Assuming AS5048A_ANGLE_REG is the register address
+ //      read_register_async(value_of(AS5048A_REGISTERS::ANGLE_14_BITS) );  // Assuming AS5048A_ANGLE_REG is the register address
 
        // Wait for the SPI read to complete (polling or can be modified for task-based waiting)
-       while (!m_async_read_complete)
-       {
+ //      while (!m_async_read_complete)
+ //      {
         // You could add a timeout here to prevent infinite waiting
-       }
+//       }
        result = m_register_value;
     }
 

@@ -69,7 +69,7 @@ volatile float g_new_shaft_angle(0.0f);
 volatile float g_new_rad_per_sec(0.0f);
 volatile int32_t g_new_int_velocity(0.0f);
 volatile uint16_t g_count(0);
-
+volatile float g_new_velocity(0.0f);
 
 // Example usage
 #if 0
@@ -868,7 +868,7 @@ bool StepperMotor::alignSensor()
     // move one electrical revolution forward
     // ramp up from 1.5Pi to 3.5Pi
     float electric_angle;
-    float mid_angle = 0.0f;
+    volatile float mid_angle = 0.0f;
     
     // Initial Rotation (270 degrees CW)
     for (int i = 0; i <=500; i++ )
@@ -876,19 +876,19 @@ bool StepperMotor::alignSensor()
         electric_angle = THREE_HALVES_PI + TWO_PI * i / 500.0f;
       
         setPhaseVoltage(m_voltage_sensor_align, 0.0f,  mechanical_to_electrical_radians(electric_angle));
-        mid_angle = m_sensor.read_angle_radians();
+        mid_angle = m_sensor.read_angle_radians_from_buffer();
 
 	    HAL_Delay(TWO_MILLISECONDS);
     }
 
     //  mid_angle represents the sensor's reading after 
     //  270 degree clockwise motor rotation.
-    mid_angle = m_sensor.read_angle_radians();
+    mid_angle = m_sensor.read_angle_radians_from_buffer();
 
 
 
 
-    float end_angle = 0.0f;
+    volatile float end_angle = 0.0f;
     
     // Reverse Rotation (270 degrees CCW)
     for (int i = 500; i >=0; i-- ) 
@@ -896,11 +896,11 @@ bool StepperMotor::alignSensor()
         electric_angle = THREE_HALVES_PI + TWO_PI * i / 500.0f ;
         
         setPhaseVoltage(m_voltage_sensor_align, 0.0f,  mechanical_to_electrical_radians(electric_angle));
-        end_angle = m_sensor.read_angle_radians();
+        end_angle = m_sensor.read_angle_radians_from_buffer();
 	    HAL_Delay(TWO_MILLISECONDS);
     }
         
-    end_angle = m_sensor.read_angle_radians();
+    end_angle = m_sensor.read_angle_radians_from_buffer();
     
     // zero applied voltages
     setPhaseVoltage(0, 0, 0);                  
@@ -1587,10 +1587,22 @@ void StepperMotor::sample_as5048_25us()
 }
 #endif
 
+#if 1
+void StepperMotor::sample_as5048_25us()
+{
+    if(async_read_complete())
+    {
+        m_sensor.async_read_angle();
+        
+        timestamp_angle_reading();
+    }    
+}
+#endif
 
 
-
-#if 1 // disabled sun 9/29
+#if 0 
+// disabled Tue 10/1 to try approach above
+// The approach below was based get_raw_count(which blocked at the time)
 void StepperMotor::sample_as5048_25us()
 {
  //--- start
@@ -2098,6 +2110,7 @@ void StepperMotor::update_speed_closed_loop(float target_rad_per_sec, float delt
 #endif
     float raw_velocity = m_shaft_rad_per_sec;
     //float raw_velocity = m_sensor.calculate_velocity_from_buffer();
+    g_new_velocity =  m_sensor.calculate_velocity_from_buffer();
 
 
     float filtered_velocity = m_LPF_velocity(raw_velocity);

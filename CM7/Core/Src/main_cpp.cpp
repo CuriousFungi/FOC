@@ -213,11 +213,17 @@ void wrapper_control_loop_25us(void)
     }
 }
 
+extern "C"
+int is_foc_initialization_complete()
+{
+   return is_foc_initialized ? 1 : 0;
+}
+
 
 extern "C"
 void wrapper_sample_as5048_25us(void)
 {
-    if(is_foc_initialized)
+    //if(is_foc_initialized)
     {
        stepper.sample_as5048_25us();
     }
@@ -358,6 +364,12 @@ void complete_spi_conversion()
        	stepper.conversion_complete();
 }
 
+extern "C"
+int async_read_complete()
+{
+  return stepper.async_read_complete() ? 1 : 0;
+}
+
 
 extern "C"
 void cpp_main(void)
@@ -428,9 +440,6 @@ void cpp_main(void)
           {
              stepper.process_encoder_data();
           }
-
-
-          
       }
   }
 }

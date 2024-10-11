@@ -315,6 +315,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
     PC2_C     ------> SPI2_MISO
     PC3_C     ------> SPI2_MOSI
     PB10     ------> SPI2_SCK
+    PB12     ------> SPI2_NSS
     */
     GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_3;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -323,7 +324,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
     GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_10;
+    GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_12;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -361,10 +362,11 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
     PC2_C     ------> SPI2_MISO
     PC3_C     ------> SPI2_MOSI
     PB10     ------> SPI2_SCK
+    PB12     ------> SPI2_NSS
     */
     HAL_GPIO_DeInit(GPIOC, GPIO_PIN_2|GPIO_PIN_3);
 
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_10);
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_10|GPIO_PIN_12);
 
     /* SPI2 interrupt DeInit */
     HAL_NVIC_DisableIRQ(SPI2_IRQn);
@@ -416,7 +418,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
     /* Peripheral clock enable */
     __HAL_RCC_TIM8_CLK_ENABLE();
     /* TIM8 interrupt Init */
-    HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
   /* USER CODE BEGIN TIM8_MspInit 1 */
 

@@ -4,7 +4,8 @@
 
 #include <cstdint>
 
-#define SPI_BUFFER_SIZE 8
+// 500 uS/25uS
+#define SPI_BUFFER_SIZE 20
 
 
 #ifdef __cplusplus
@@ -89,6 +90,8 @@ class AS5048A
     void     delay_microseconds(volatile uint32_t microseconds);
 
     float read_angle_radians();
+    float read_angle_radians_v2();
+    
     void  invert_output(bool invert);
   bool     invert_output(){return m_invert_output;} // Temporary bridge
 
@@ -106,9 +109,11 @@ class AS5048A
   bool request_raw_count();
   uint16_t get_current_raw_count();
   uint16_t blocking_get_raw_count();
+  float read_angle_radians_from_buffer();
 
+  void async_read_angle();
 
-  private:
+  
 
   //  float read_angle_radians();
 
@@ -123,6 +128,10 @@ class AS5048A
         MAGNITUDE_14_BITS           = 0x3FFE, // Read Only
         ANGLE_14_BITS               = 0x3FFF  
     };
+        
+    uint8_t  spiCalcEvenParity(uint16_t value);
+        
+    private:
 
     uint16_t read_register(uint16_t reg_address);
 
@@ -130,7 +139,6 @@ class AS5048A
 
     uint16_t write_register(uint16_t registerAddress, uint16_t data);
 
-    uint8_t  spiCalcEvenParity(uint16_t value);
 
     uint16_t get_state();
     uint8_t  get_gain();

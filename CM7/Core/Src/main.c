@@ -31,7 +31,6 @@
 
 //#include "stm32h755xx.h"
 #define TIM1_UP_TIM16_IRQn       ((IRQn_Type)25)  // Example IRQ number, actual value may vary
-#define AS5048_READ_SIZE 2  // AS5048 sensor returns 16-bit data (2 bytes)
 
 uint16_t as5048_read_buffer;  // 16-bit buffer for storing the angle data
 float filtered_velocity = 0.0f;  // Store filtered velocity value
@@ -111,11 +110,7 @@ int __io_putchar(int ch)
 }
 
 
-
-
-
-
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+void SPI_TxRx_completion_callback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi2)
     {
@@ -123,28 +118,37 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
     }
 }
 
+// If the duty cycle is 0, HAL_TIM_PWM_PulseFinishedCallback might not be invoked.
+// Hybrid approach is to use both
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+    
+    if(htim->Instance == TIM1 || htim->Instance == TIM8)
+    {
+        wrapper_sample_as5048_25us();
+    }
+}
 
-
-// Implement the callback function
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM1)  // Check if the callback is triggered by TIM1
+    
+    if(htim->Instance == TIM1)
     {
-      //  foc_iteration();  // Call your FOC loop function
-      //wrapper_control_loop_25us();
-
-      
-      //wrapper_sample_as5048_25us();
-      // Initiate non-blocking SPI read
-      HAL_SPI_Receive_IT(&hspi2, (uint8_t *)&as5048_read_buffer, AS5048_READ_SIZE);
-
-       // Log timestamp for velocity calculation
-       timestamp_angle_reading();
+        wrapper_sample_as5048_25us();
     }
     else if (htim->Instance == TIM8) 
     {
        //wrapper_sample_as5048_25us();
        wrapper_control_loop_25us();
+    }
+}
+
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi == &hspi2)
+    {
+        // Handle error
+        // --> set conversion complete so it can try again.
     }
 }
 
@@ -218,10 +222,10 @@ static void MX_DMA_Init(void) {
  hdma_adc1.Init.Priority = DMA_PRIORITY_HIGH;   // High priority for DMA
  hdma_adc1.Init.FIFOMode = DMA_FIFOMODE_DISABLE; // FIFO mode disabled
 
-if (HAL_DMA_Init(&hdma_adc1) != HAL_OK)
-   {
-       Error_Handler(); // Handle DMA init error
-   }
+ if (HAL_DMA_Init(&hdma_adc1) != HAL_OK)
+ {
+    Error_Handler(); // Handle DMA init error
+ }
 
    // Link DMA handle to the ADC handle
    __HAL_LINKDMA(&hadc1, DMA_Handle, hdma_adc1);
@@ -405,98 +409,79 @@ Error_Handler();
       Error_Handler();
   }
 
-
-
-
-
-
-
-
-
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_USART2_UART_Init();
-  MX_SPI2_Init();
   MX_TIM2_Init();
   MX_WWDG1_Init();
   /* USER CODE BEGIN 2 */
-
-
-
-
 
   // Enable the cycle counter
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable DWT
   DWT->CYCCNT = 0;                                // Reset the cycle counter
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Enable the cycle counter
 
-  //-------------------------
-  // this was hiding in the StepperDriver ctor
-
-
 
   MX_TIM1_Init();
+  MX_TIM8_Init();
+  TIM1->DIER |= TIM_DIER_UIE; 
 
-  __HAL_RCC_TIM1_CLK_ENABLE();
+  
+  MX_SPI2_Init();
 
-  status = HAL_TIM_Base_Start(&htim1);
 
+
+  HAL_NVIC_SetPriority(SPI2_IRQn, 0, 0);  // Set the priority for SPI2 interrupt
+  HAL_NVIC_EnableIRQ(SPI2_IRQn);          // Enable SPI2 interrupt in NVIC
+ // __HAL_SPI_ENABLE_IT(&hspi2, (SPI_IT_RXNE | SPI_IT_ERR));
+
+  
+  if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET) 
+  {
+      status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_TX_RX_COMPLETE_CB_ID, SPI_TxRx_completion_callback);
+      if(HAL_OK != status) { Error_Handler(); }
+  }
+
+  status = HAL_TIM_Base_Start_IT(&htim1);
   if(HAL_OK != status) { Error_Handler(); }
 
-
-  // Start PWM channels on TIM1
-  status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
+  status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_1);
   if(HAL_OK != status) { Error_Handler(); }
 
-  status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-
+  status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_2);
   if(HAL_OK != status) { Error_Handler(); }
 
   // Introduce a 90-degree phase shift for TIM1
   TIM8->CNT = TIM8->ARR / 4;
 
 
-  MX_TIM8_Init();
 
-   // __HAL_RCC_TIM8_CLK_ENABLE(); redundant
-
-  //status = HAL_TIM_Base_Start(&htim8);
-  //if(HAL_OK != status) { Error_Handler(); }
-
-  // Start the timer in interrupt mode after initialization
   status =  HAL_TIM_Base_Start_IT(&htim8) ;
-  if (status != HAL_OK)
-  {
-      Error_Handler();
-  }
+  if (status != HAL_OK) { Error_Handler();}
 
-
-
-
-  // Start PWM channels on TIM8
-  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-
+  status = HAL_TIM_PWM_Start_IT(&htim8, TIM_CHANNEL_1);
   if(HAL_OK != status) { Error_Handler(); }
 
-  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-
+  status = HAL_TIM_PWM_Start_IT(&htim8, TIM_CHANNEL_2);
   if(HAL_OK != status) { Error_Handler(); }
 
   status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
-
   if(HAL_OK != status) { Error_Handler(); }
 
 
-  //-----------------------
+  //status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_RX_COMPLETE_CB_ID, HAL_SPI_RxCpltCallback);
+  //if(HAL_OK != status) { Error_Handler(); }
 
 
+  TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
+ // NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);  // Enable the TIM1 update interrupt in the NVIC
+ // NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 5);  // Set the priority level
+
+//  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 5, 0);
+//  HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
 
   enable_swo();
-
-
-
 
   printf("Hello, USART2!\r\n");
 
@@ -537,9 +522,6 @@ void SystemClock_Config(void)
   // Ensure that this clock frequency matches your clock setup
   extern uint32_t SystemCoreClock;
   SystemCoreClock = 400000000;  // 400 MHz for STM32H7
-
-
-
 
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
@@ -826,12 +808,12 @@ static void MX_SPI2_Init(void)
   hspi2.Init.DataSize = SPI_DATASIZE_16BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
-  hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi2.Init.NSS = SPI_NSS_HARD_OUTPUT;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi2.Init.CRCPolynomial = 0x0;
+  hspi2.Init.CRCPolynomial = 0;
   hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
   hspi2.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
   hspi2.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
@@ -937,11 +919,12 @@ static void MX_SPI2_Init(void)
   
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim1);  // Force the main output enable for TIM1
-
+#if 0
   TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
   NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);  // Enable the TIM1 update interrupt in the NVIC
   NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 5);  // Set the priority level
-  
+#endif
+
   //HAL_NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 6, 0);
   //HAL_NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
 
@@ -949,6 +932,7 @@ static void MX_SPI2_Init(void)
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
+
 
 }
 
@@ -1149,10 +1133,10 @@ static void MX_TIM2_Init(void)
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim8);  // Force the main output enable for TIM8
 
-
-  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
+#if 0
+  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
-
+#endif
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);
