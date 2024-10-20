@@ -2,7 +2,7 @@
 #define FOCUTILS_LIB_H
 
 
-
+#include <limits>
 
 //#include "Arduino.h"
 
@@ -40,6 +40,8 @@
 
 #define MIN_ANGLE_DETECT_MOVEMENT (_2PI/101.0f)
 
+
+
 // dq current structure
 struct DQCurrent_s
 {
@@ -65,6 +67,25 @@ struct DQVoltage_s
     float d;
     float q;
 };
+
+
+
+constexpr double sqrtNewtonRaphson(double x, double curr, double prev) 
+{
+    return (curr == prev)
+           ? curr
+           : sqrtNewtonRaphson(x, 0.5 * (curr + x / curr), curr);
+}
+
+
+constexpr double compile_time_sqrt(double x) 
+{
+    return ((x >= 0) && (x < std::numeric_limits<double>::infinity()))
+           ? sqrtNewtonRaphson(x, x, 0)
+           : std::numeric_limits<double>::quiet_NaN();
+}
+
+
 
 
 /**

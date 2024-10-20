@@ -22,6 +22,8 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
+#define ADC_BUFFER_SIZE 32
+
 #ifdef __cplusplus
 extern "C" {
 #endif

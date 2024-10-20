@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "interrupt_priorities.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -26,14 +27,24 @@
 
 //#define USE_HAL_ADC_REGISTER_CALLBACKS (1)
 
+#include "stm32h7xx.h"
+
 #include "stm32h7xx_hal.h" // Ensure correct HAL is included for your MCU
 #include "stm32h7xx_hal_adc.h"
+
+
+extern void DWT_Init(void);
+
 
 //#include "stm32h755xx.h"
 #define TIM1_UP_TIM16_IRQn       ((IRQn_Type)25)  // Example IRQ number, actual value may vary
 
+#define CORE_CLOCK_HZ 400000000U  // 400 MHz for STM32H755
+
+
 uint16_t as5048_read_buffer;  // 16-bit buffer for storing the angle data
 float filtered_velocity = 0.0f;  // Store filtered velocity value
+
 
 
 #ifdef __cplusplus
@@ -44,6 +55,8 @@ void cpp_main(void);
 void foc_iteration(void);      
 void wrapper_control_loop_25us(void);
 void wrapper_sample_as5048_25us(void);
+void wrapper_reinit_dma_for_spi(void);
+
 
 void RefreshWatchdog(void);
 void complete_spi_conversion(void);
@@ -89,6 +102,8 @@ DMA_HandleTypeDef hdma_adc1;
 DAC_HandleTypeDef hdac1;
 
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi2_rx;
+DMA_HandleTypeDef hdma_spi2_tx;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
@@ -100,6 +115,7 @@ UART_HandleTypeDef huart3;
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 WWDG_HandleTypeDef hwwdg1;
+
 /* USER CODE BEGIN PV */
 
 
@@ -110,7 +126,7 @@ int __io_putchar(int ch)
 }
 
 
-void SPI_TxRx_completion_callback(SPI_HandleTypeDef *hspi)
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi2)
     {
@@ -134,7 +150,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     
     if(htim->Instance == TIM1)
     {
-        wrapper_sample_as5048_25us();
+       // wrapper_sample_as5048_25us();
     }
     else if (htim->Instance == TIM8) 
     {
@@ -147,8 +163,12 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi2)
     {
-        // Handle error
-        // --> set conversion complete so it can try again.
+        
+        //__HAL_TIM_DISABLE(&htim1);
+        //__HAL_TIM_DISABLE(&htim8);
+ //       wrapper_reinit_dma_for_spi();
+        //__HAL_TIM_ENABLE(&htim8);
+        //__HAL_TIM_ENABLE(&htim1);
     }
 }
 
@@ -169,7 +189,6 @@ static void MX_USART2_UART_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_WWDG1_Init(void);
-
 /* USER CODE BEGIN PFP */
 void enable_swo(void) {
     // Enable trace and debug blocks in CoreDebug
@@ -201,80 +220,43 @@ void enable_swo(void) {
 /* USER CODE BEGIN 0 */
 
 static void MX_DMA_Init(void) ;
-
-static void MX_DMA_Init(void) {
-
-
- // DMA controller clock enable */
- __HAL_RCC_DMA1_CLK_ENABLE();
-        
-//=====================
-
-// Configure DMA request for ADC1
- hdma_adc1.Instance = DMA1_Stream0;             // Use DMA1 Stream 0
- hdma_adc1.Init.Request = DMA_REQUEST_ADC1;     // ADC1 DMA request
- hdma_adc1.Init.Direction = DMA_PERIPH_TO_MEMORY; // Peripheral to memory direction
- hdma_adc1.Init.PeriphInc = DMA_PINC_DISABLE;   // No increment for peripheral address
- hdma_adc1.Init.MemInc = DMA_MINC_ENABLE;       // Increment memory address
- hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD; // 16-bit peripheral data alignment
- hdma_adc1.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;    // 16-bit memory data alignment
- hdma_adc1.Init.Mode = DMA_CIRCULAR;            // Circular mode for continuous data stream
- hdma_adc1.Init.Priority = DMA_PRIORITY_HIGH;   // High priority for DMA
- hdma_adc1.Init.FIFOMode = DMA_FIFOMODE_DISABLE; // FIFO mode disabled
-
- if (HAL_DMA_Init(&hdma_adc1) != HAL_OK)
- {
-    Error_Handler(); // Handle DMA init error
- }
-
-   // Link DMA handle to the ADC handle
-   __HAL_LINKDMA(&hadc1, DMA_Handle, hdma_adc1);
-
-   // Configure NVIC for DMA
-   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 1, 0); // Set priority
-   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);         // Enable interrupt
-
-//====================
-
-
-    // Enable DMA1 clock (or the appropriate DMA controller)
-//    __HAL_RCC_DMA1_CLK_ENABLE();
-
-    // Configure DMA for DAC (Memory to Peripheral)
-    hdma_dac1.Instance = DMA1_Stream5;  // Use the appropriate stream
-    hdma_dac1.Init.Request = DMA_REQUEST_DAC1;  // DMA request for DAC1
-    hdma_dac1.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    hdma_dac1.Init.PeriphInc = DMA_PINC_DISABLE;
-    hdma_dac1.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_dac1.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;  // 16-bit data size
-    hdma_dac1.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;  // 16-bit data size
-    hdma_dac1.Init.Mode = DMA_CIRCULAR;  // Circular mode for continuous transfer
-    hdma_dac1.Init.Priority = DMA_PRIORITY_HIGH;
-
-    // Initialize the DMA
-    if (HAL_DMA_Init(&hdma_dac1) != HAL_OK) {
-        Error_Handler();
-    }
-
-    // Link DMA handle to the DAC handle
-    __HAL_LINKDMA(&hdac1, DMA_Handle1, hdma_dac1);
-    
-}
-
-HAL_StatusTypeDef Start_DAC_DMA(void);
-extern volatile uint16_t* adc_dma_result;
-#define NUM_ADC_CHANNELS 2   // duplicates main_cpp.cpp
-#define BUFFER_SIZE  32
-
-HAL_StatusTypeDef Start_DAC_DMA(void) 
+static void MX_DMA_Init(void)
 {
-    return HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_dma_result, BUFFER_SIZE);
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, IRQ_PRIORITY_ADC, 0);     // ADC
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, IRQ_PRIORITY_DMA_SPI_RX, 0);    // SPI Rx
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, IRQ_PRIORITY_DMA_SPI_TX, 0);    // SPI Tx
+  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
+
+  
+    __HAL_DMA_ENABLE_IT(&hdma_spi2_rx, DMA_IT_TE);  // Enable DMA transfer error interrupt
+    __HAL_DMA_ENABLE_IT(&hdma_spi2_rx, DMA_IT_TC);
+
+}
+
+
+
+HAL_StatusTypeDef Start_ADC_DMA(void);
+extern volatile uint16_t* adc_dma_result;
+
+HAL_StatusTypeDef Start_ADC_DMA(void) 
+{
+    return HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_dma_result, ADC_BUFFER_SIZE);
 }
 
 
 
 
-#if 1
+
 // Define ITM port 0 register address for printf redirection
 #define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
 #define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
@@ -293,13 +275,22 @@ int _write(int file, char *ptr, int len) {
 
 
 
+
 void ITM_Init(void) {
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable ITM and DWT
-    ITM->LAR = 0xC5ACCE55;                          // Unlock ITM
-    ITM->TCR = 0x0001000D;                          // Enable ITM with SWOENA and Trace BusID
-    ITM->TER = 0x00000004;                          // Enable stimulus port 0 (for printf)
+    // Preserve other bits in DEMCR and enable only the TRCENA bit
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Set TRCENA, preserving other bits
+
+    // Unlock the ITM
+    ITM->LAR = 0xC5ACCE55;
+
+    // Enable ITM with SWOENA and Trace BusID (TCR settings)
+    ITM->TCR = 0x0001000D;  // ITMENA + SWOENA
+
+    // Enable stimulus port 0 (used for printf via SWO)
+    ITM->TER = 0x00000004;
 }
-#endif
+
+
 
 
 /* USER CODE END 0 */
@@ -308,11 +299,17 @@ void ITM_Init(void) {
   * @brief  The application entry point.
   * @retval int
   */
-
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
-
+void   SystemClock_Config();
 int main(void)
 {
+    HAL_Init();
+    SystemClock_Config();
+    #if 0
+    MPU->CTRL &= ~MPU_CTRL_ENABLE_Msk;  // Disable the MPU
+    SCB_CleanInvalidateDCache();
+    SCB_DisableDCache();
+    #endif
 
   /* USER CODE BEGIN 1 */
 
@@ -340,18 +337,18 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* Configure the system clock */
-  SystemClock_Config();
 /* USER CODE BEGIN Boot_Mode_Sequence_2 */
 /* When system initialization is finished, Cortex-M7 will release Cortex-M4 by means of
 HSEM notification */
 
+  // Call DWT_Init after system clock is set
+  DWT_Init();
 
 
 
@@ -398,17 +395,11 @@ Error_Handler();
   MX_DAC1_Init();
 
   HAL_StatusTypeDef status;
-  
-  // Register the conversion complete callback explicitly is undefined, set USE_HAL_ADC_REGISTER_CALLBACKS to 1U in Core/inc/stm32h7xx_hal_conf.h
-  // If HAL_ADC_CONVERSION_COMPLETE_CB_ID
   status = HAL_ADC_RegisterCallback(&hadc1,  HAL_ADC_CONVERSION_COMPLETE_CB_ID, HAL_ADC_ConvCpltCallback);
-  
   if (status != HAL_OK)
   {
-      // Handle registration error
       Error_Handler();
   }
-
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_USART2_UART_Init();
@@ -425,22 +416,16 @@ Error_Handler();
   MX_TIM1_Init();
   MX_TIM8_Init();
   TIM1->DIER |= TIM_DIER_UIE; 
-
   
   MX_SPI2_Init();
 
-
-
-  HAL_NVIC_SetPriority(SPI2_IRQn, 0, 0);  // Set the priority for SPI2 interrupt
-  HAL_NVIC_EnableIRQ(SPI2_IRQn);          // Enable SPI2 interrupt in NVIC
- // __HAL_SPI_ENABLE_IT(&hspi2, (SPI_IT_RXNE | SPI_IT_ERR));
-
-  
+#if 0
   if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET) 
   {
       status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_TX_RX_COMPLETE_CB_ID, SPI_TxRx_completion_callback);
       if(HAL_OK != status) { Error_Handler(); }
   }
+#endif
 
   status = HAL_TIM_Base_Start_IT(&htim1);
   if(HAL_OK != status) { Error_Handler(); }
@@ -448,21 +433,20 @@ Error_Handler();
   status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_1);
   if(HAL_OK != status) { Error_Handler(); }
 
-  status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_2);
+  status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   if(HAL_OK != status) { Error_Handler(); }
 
   // Introduce a 90-degree phase shift for TIM1
   TIM8->CNT = TIM8->ARR / 4;
 
 
-
   status =  HAL_TIM_Base_Start_IT(&htim8) ;
   if (status != HAL_OK) { Error_Handler();}
 
-  status = HAL_TIM_PWM_Start_IT(&htim8, TIM_CHANNEL_1);
+  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
   if(HAL_OK != status) { Error_Handler(); }
 
-  status = HAL_TIM_PWM_Start_IT(&htim8, TIM_CHANNEL_2);
+  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
   if(HAL_OK != status) { Error_Handler(); }
 
   status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
@@ -474,11 +458,6 @@ Error_Handler();
 
 
   TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
- // NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);  // Enable the TIM1 update interrupt in the NVIC
- // NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 5);  // Set the priority level
-
-//  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 5, 0);
-//  HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
 
   enable_swo();
@@ -486,7 +465,7 @@ Error_Handler();
   printf("Hello, USART2!\r\n");
 
   // Start DAC with DMA
- // if (Start_DAC_DMA() != HAL_OK) // Ensure Start_DAC_DMA() returns a status
+ // if (Start_ADC_DMA() != HAL_OK) // Ensure Start_ADC_DMA() returns a status
  //  {
  //      Error_Handler();  // Handle any DMA errors specifically
  //  }
@@ -518,11 +497,8 @@ Error_Handler();
   */
 void SystemClock_Config(void)
 {
-
-  // Ensure that this clock frequency matches your clock setup
   extern uint32_t SystemCoreClock;
   SystemCoreClock = 400000000;  // 400 MHz for STM32H7
-
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -581,162 +557,53 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
-
-#if 1 // test
 static void MX_ADC1_Init(void)
 {
+    // Changes
+    // disabled hadc1.Init.ScanConvMode
+    // Enabled continous conversion
+    // changed hadc1.Init.EOCSelection from ADC_EOC_SEQ_CONV to ADC_EOC_SINGLE_CONV
+    //changed hadc1.Init.ConversionDataManagement from ADC_CONVERSIONDATA_DR to ADC_CONVERSIONDATA_DMA_CIRCULAR
+    // removed assignments to hadc1.Init.Oversampling fields
     ADC_ChannelConfTypeDef sConfig = {0};
-
-    // Initialize ADC Instance
     hadc1.Instance = ADC1;
     hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;     // ADC asynchronous clock
     hadc1.Init.Resolution = ADC_RESOLUTION_16B;          // 16-bit resolution
-    hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;          // Disable scan mode for single channel
-    hadc1.Init.ContinuousConvMode = ENABLE; //DISABLE;             // Single conversion mode
+    hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;          // Disable scan mode for single channel prev ADC_SCAN_ENABLE
+    hadc1.Init.ContinuousConvMode = ENABLE;        // Single conversion mode
     hadc1.Init.NbrOfConversion = 2;
     hadc1.Init.DiscontinuousConvMode = DISABLE;
     hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;    // Start conversion with software
     hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-    hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV; //ADC_EOC_SEQ_CONV; //ADC_EOC_SINGLE_CONV;       // End of conversion after each conversion
+    hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;    // End of conversion after each conversion
     hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;         // Preserve data on overrun
-    hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;     // No bit shift
-    hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_CIRCULAR; //ADC_CONVERSIONDATA_DR;
-
-    // Initialize ADC
+    hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;     
+    hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_CIRCULAR;
     if (HAL_ADC_Init(&hadc1) != HAL_OK)
     {
         Error_Handler(); // Initialization Error
     }
-
-    // Configure the ADC channel
     sConfig.Channel = ADC_CHANNEL_3;                   // Select channel 3, adjust if necessary
     sConfig.Rank = ADC_REGULAR_RANK_1;                 // Rank 1 in the regular group
     sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;    // Shortest sampling time
     sConfig.SingleDiff = ADC_SINGLE_ENDED;             // Single-ended input
     sConfig.OffsetNumber = ADC_OFFSET_NONE;            // No offset
     sConfig.Offset = 0;
-
-    // Apply the channel configuration
     if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
     {
         Error_Handler(); // Channel configuration Error
     }
-
     sConfig.Channel = ADC_CHANNEL_5;
     sConfig.Rank = ADC_REGULAR_RANK_2;
     if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
     {
       Error_Handler();
     }
-
-    // Set ADC NVIC priority and enable the interrupt
-    HAL_NVIC_SetPriority(ADC_IRQn, 1, 0);  // Set the interrupt priority
+    HAL_NVIC_SetPriority(ADC_IRQn, IRQ_PRIORITY_ADC, 0);  // Set the interrupt priority
     HAL_NVIC_EnableIRQ(ADC_IRQn);          // Enable the ADC interrupt
-
-    
 }
 
-#if 0
-uint32_t read_adc_value(void)
-{
-    // Start ADC Conversion
-    if (HAL_ADC_Start(&hadc1) != HAL_OK)
-    {
-        Error_Handler(); // Start Error
-    }
 
-    // Poll for end of conversion
-    if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK)
-    {
-        Error_Handler(); // Poll Error
-    }
-
-    // Get the converted value
-    return HAL_ADC_GetValue(&hadc1);
-}
-#endif
-
-#endif
-
-
-#if 0
-static void MX_ADC1_Init(void)
-{
-
-  /* USER CODE BEGIN ADC1_Init 0 */
-
-  /* USER CODE END ADC1_Init 0 */
-
-  ADC_MultiModeTypeDef multimode = {0};
-  ADC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN ADC1_Init 1 */
-
-  /* USER CODE END ADC1_Init 1 */
-
-  /** Common config
-  */
-  hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV; //ADC_EOC_SINGLE_CONV;
-  hadc1.Init.LowPowerAutoWait = DISABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
-  hadc1.Init.NbrOfConversion = 2;
-  hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DR;
-  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
-  
-  hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;
-  hadc1.Init.OversamplingMode = DISABLE; //ENABLE;
-  hadc1.Init.Oversampling.Ratio = 0; //8;
-  hadc1.Init.Oversampling.RightBitShift = ADC_RIGHTBITSHIFT_NONE; //ADC_RIGHTBITSHIFT_3;
-  hadc1.Init.Oversampling.TriggeredMode = ADC_TRIGGEREDMODE_SINGLE_TRIGGER;
-  hadc1.Init.Oversampling.OversamplingStopReset = ADC_REGOVERSAMPLING_CONTINUED_MODE; //ADC_REGOVERSAMPLING_CONTINUED_MODE;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
-  hadc1.Init.Resolution = ADC_RESOLUTION_16B;
-  if (HAL_ADC_Init(&hadc1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure the ADC multi-mode
-  */
-  multimode.Mode = ADC_MODE_INDEPENDENT;
-  if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_3;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
-  sConfig.SingleDiff = ADC_SINGLE_ENDED;
-  sConfig.OffsetNumber = ADC_OFFSET_NONE;
-  sConfig.Offset = 0;
-  sConfig.OffsetSignedSaturation = DISABLE;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_5;
-  sConfig.Rank = ADC_REGULAR_RANK_2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN ADC1_Init 2 */
-
-  /* USER CODE END ADC1_Init 2 */
-
-}
-#endif
 
 /**
   * @brief DAC1 Initialization Function
@@ -809,11 +676,11 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi2.Init.CRCPolynomial = 0;
+  hspi2.Init.CRCPolynomial = 0x0;
   hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
   hspi2.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
   hspi2.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
@@ -828,8 +695,12 @@ static void MX_SPI2_Init(void)
   {
     Error_Handler();
   }
+
   /* USER CODE BEGIN SPI2_Init 2 */
-  
+  // see stm32h7xx_hal_msp.c
+  __HAL_LINKDMA(&hspi2, hdmarx, hdma_spi2_rx);  // Link RX DMA
+  __HAL_LINKDMA(&hspi2, hdmatx, hdma_spi2_tx);  // Link TX DMA
+
   /* USER CODE END SPI2_Init 2 */
 
 }
@@ -901,9 +772,7 @@ static void MX_SPI2_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  
   sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
-  
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -919,20 +788,9 @@ static void MX_SPI2_Init(void)
   
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim1);  // Force the main output enable for TIM1
-#if 0
-  TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
-  NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);  // Enable the TIM1 update interrupt in the NVIC
-  NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 5);  // Set the priority level
-#endif
-
-  //HAL_NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 6, 0);
-  //HAL_NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
-
-
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
-
 
 }
 
@@ -958,7 +816,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 200-1; //400-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 400 -1; //35-1;
+  htim2.Init.Period = 35-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1043,31 +901,25 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  
   if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
   }
-  
   if (HAL_TIM_OC_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
   }
-  
   sSlaveConfig.SlaveMode = TIM_SLAVEMODE_DISABLE;
   sSlaveConfig.InputTrigger = TIM_TS_ITR0;
-  
   if (HAL_TIM_SlaveConfigSynchro(&htim8, &sSlaveConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC3REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
@@ -1075,7 +927,6 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
@@ -1087,18 +938,15 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  
   if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  
   sConfigOC.OCMode = TIM_OCMODE_TIMING;
   if (HAL_TIM_OC_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_6) != HAL_OK)
   {
     Error_Handler();
   }
-  
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
@@ -1133,10 +981,6 @@ static void MX_TIM2_Init(void)
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim8);  // Force the main output enable for TIM8
 
-#if 0
-  HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
-#endif
 
   /* USER CODE END TIM8_Init 2 */
   HAL_TIM_MspPostInit(&htim8);
@@ -1275,13 +1119,20 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 
 }
 
-// Define a macro to enable/disable watchdog in your project settings or code
 #undef ENABLE_WATCHDOG
-
 #ifdef ENABLE_WATCHDOG
-
+  //* @param None
+  //* @retval None  */
 static void MX_WWDG1_Init(void)
 {
+
+  /* USER CODE BEGIN WWDG1_Init 0 */
+
+  /* USER CODE END WWDG1_Init 0 */
+
+  /* USER CODE BEGIN WWDG1_Init 1 */
+
+  /* USER CODE END WWDG1_Init 1 */
   hwwdg1.Instance = WWDG1;
   hwwdg1.Init.Prescaler = WWDG_PRESCALER_1;
   hwwdg1.Init.Window = 64;
@@ -1291,37 +1142,35 @@ static void MX_WWDG1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN WWDG1_Init 2 */
+
+  /* USER CODE END WWDG1_Init 2 */
+
 }
 void RefreshWatchdog(void)
+/**
+  * Enable DMA controller clock
+  */
 {
     HAL_WWDG_Refresh(&hwwdg1);
 }
 #else
 void DisableWatchdogs(void) {
-    // Disable the Window Watchdog clock
+  /* DMA controller clock enable */
     __HAL_RCC_WWDG_CLK_DISABLE();
 
-
-    // Disable the Independent Watchdog (IWDG) if it somehow started
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
     IWDG1->KR = 0x0000;  // Prevents the IWDG from starting
 
-    // Ensure Window Watchdog (WWDG) is not initialized or started
-    // There should be no calls to HAL_WWDG_Init(), HAL_WWDG_Start(), etc.
-    // If required, perform a manual check here:
 
-    // Example of ensuring WWDG is not running (if enabled by mistake):
     if ((WWDG1->CR & WWDG_CR_WDGA) != 0) {
-        // Disable WWDG (no proper direct disable, ensure it is never enabled)
-        // This requires ensuring that the WWDG initialization code is not executed
         __HAL_RCC_WWDG_CLK_DISABLE();  // Disable clock to WWDG as an extreme measure
     }
 }
-
 static void MX_WWDG1_Init(void){DisableWatchdogs();}
 void RefreshWatchdog(void){return;}
-
 #endif
-
 
 /**
   * @brief GPIO Initialization Function

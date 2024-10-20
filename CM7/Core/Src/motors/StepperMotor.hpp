@@ -47,15 +47,6 @@ extern "C" {
 #define US_TO_SEC_SCALING (1000000) // Convert microseconds to seconds for velocity calculation
 #define BUFFER_SIZE 10              // Circular buffer size for moving window
 
-typedef struct {
-    uint16_t angle_buffer[BUFFER_SIZE];  // Circular buffer to store previous encoder readings
-    uint32_t time_buffer[BUFFER_SIZE];   // Circular buffer to store corresponding time deltas
-    uint8_t buffer_index;                // Current index in the circular buffer
-    uint8_t buffer_count;                // Number of valid entries in the buffer
-} VelocityContext;
-
-
-
 class OffsetEstimator 
 {
 public:
@@ -280,14 +271,17 @@ class StepperMotor
     void update_target_rad_per_sec(float rps);
     void control_loop_25us();
     void sample_as5048_25us();
-    void init_velocity_context(VelocityContext *context, uint16_t initial_read);
-    //int32_t compute_velocity_moving_window(VelocityContext *context, uint16_t current_read, uint32_t time_delta_us);
     float convert_count_to_shaft_angle(uint16_t count);
     float calculate_delta_angle(uint16_t last_angle, uint16_t current_angle);
     void conversion_complete(){m_sensor.conversion_complete();}
-    void process_encoder_data(){m_sensor.process_encoder_data();}
-    void timestamp_angle_reading(){m_sensor.timestamp();}
+   // void process_encoder_data(){m_sensor.process_encoder_data();}
+   // void timestamp_angle_reading(){m_sensor.timestamp();}
     bool async_read_complete(){return m_sensor.async_read_complete();}
+
+    float read_angle_radians_from_buffer_with_offset();
+
+
+    
     //-------------------------------------------------------------------------
     //                        getSensorAngle_Radians
     //-------------------------------------------------------------------------
@@ -346,7 +340,8 @@ class StepperMotor
 
     float calculate_velocity(float current_angle, float delta_seconds);
     
-
+    struct Sample get_current_sample(){return m_current_sample;}
+    void set_async_read_complete(){m_sensor.set_async_read_complete();}
   private:
 
     void compute_inverse_park_transform( 
@@ -355,8 +350,9 @@ class StepperMotor
                                     float electric_angle);
 
 
-    float shaft_radians_per_second();         // from FOCMotor::
+    //float shaft_radians_per_second();         // from FOCMotor::
     float get_electric_angle_radians();       // from FOCMotor::
+    float get_electric_angle_radians_v2();
 
   
     float get_filtered_shaft_angle();
@@ -369,7 +365,7 @@ class StepperMotor
     //-------------------------------------------------------------------------
     bool alignSensor();
 
-    bool determine_sensor_direction();             // replacement for alignSensor
+    //bool determine_sensor_direction();             // replacement for alignSensor
 
     //-------------------------------------------------------------------------
     //                           absoluteZeroSearch
@@ -377,7 +373,7 @@ class StepperMotor
     // Serach for the absolute 0 of sensor angle.
     // return true if found
     //-------------------------------------------------------------------------
-    bool absoluteZeroSearch();
+    //bool absoluteZeroSearch();
         
     // Open loop motion control    
     /**
@@ -591,9 +587,17 @@ class StepperMotor
     float               m_hifactor_b;
     float               m_lofactor_b;
 
-    float               m_mechanical_rps_cmd;
+    float               m_commanded_speed_radians_per_sec;
+    float               m_commanded_angle_radians;
+    float               m_measured_speed_radians_per_sec;
+    float               m_measured_angle_radians;
+
+    
     float               m_target_voltage_q;
-    VelocityContext     m_velocity_context;
+
+
+   
+    struct Sample      m_current_sample;
 };
 
 

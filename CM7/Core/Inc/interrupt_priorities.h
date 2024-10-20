@@ -1,0 +1,12 @@
+#ifndef INTERRUPT_PRIORITIES_H
+#define INTERRUPT_PRIORITIES_H
+
+#define IRQ_PRIORITY_DMA_SPI_RX 0
+#define IRQ_PRIORITY_TIM1       1
+#define IRQ_PRIORITY_TIM8       1
+#define IRQ_PRIORITY_DMA_SPI_TX 2
+#define IRQ_PRIORITY_ADC        2
+#define IRQ_PRIORITY_SPI        3
+
+
+#endif

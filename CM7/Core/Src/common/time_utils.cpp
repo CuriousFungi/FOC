@@ -36,3 +36,39 @@ unsigned long _micros(){
 return DWT->CYCCNT / 84;
 
 }
+
+
+/**
+ * @brief  Initializes the Data Watchpoint and Trace (DWT) unit to enable cycle counting.
+ * 
+ * This function enables the DWT cycle counter, which is part of the ARM Cortex-M's 
+ * debugging and tracing features. The DWT cycle counter can be used to measure the 
+ * number of CPU cycles elapsed, which is helpful for profiling code performance 
+ * and timing analysis.
+ */
+void DWT_Init(void) 
+{
+    // Check if the DWT (Data Watchpoint and Trace) unit is already enabled
+    // CoreDebug->DEMCR contains the Debug Exception and Monitor Control Register
+    if (!(CoreDebug->DEMCR & CoreDebug_DEMCR_TRCENA_Msk)) 
+    {
+        // Enable the DWT unit by setting the TRCENA (Trace Enable) bit in DEMCR
+        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+        // Reset the cycle counter (CYCCNT) to 0 to start counting from zero
+        DWT->CYCCNT = 0;
+
+        // Enable the DWT cycle counter by setting the CYCCNTENA bit in the DWT control register
+        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    }
+}
+
+
+uint32_t micros(void)
+{
+    return DWT->CYCCNT / (CORE_CLOCK_HZ / 1000000U);
+}
+
+
+
+

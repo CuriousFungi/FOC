@@ -1,19 +1,21 @@
 #include "lowpass_filter.hpp"
 #include <cmath>
 
+#include "time_utils.hpp"
+
 LowPassFilter::LowPassFilter(float time_constant)
     : Tf(time_constant)
     , y_prev(0.0f)
     , initialized(false)
 {
-    timestamp_prev = _micros();
+    timestamp_prev = micros();
 }
 
 
 float LowPassFilter::operator() (float x)
 {
     const float SECONDS_PER_MICROSECOND(0.000001f);
-    unsigned long timestamp = _micros();
+    unsigned long timestamp = micros();
  
     float dt = static_cast<float>(timestamp - timestamp_prev)
              * SECONDS_PER_MICROSECOND;

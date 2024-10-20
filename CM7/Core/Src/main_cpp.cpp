@@ -22,6 +22,8 @@
 #include "stdio.h"
 
 #include "./motors/StepperMotor.hpp"
+#include "./common/time_utils.hpp"
+#include "./sensors/as5048a.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,10 +67,7 @@ extern UART_HandleTypeDef huart3;
 
 extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
-
-#define NUM_ADC_CHANNELS 2
-#define BUFFER_SIZE  32
-volatile uint16_t adc_dma_result[BUFFER_SIZE];
+volatile uint16_t adc_dma_result[ADC_BUFFER_SIZE];
 
 // This variable calculate the array length.
 // In our case, array size in 2
@@ -109,6 +108,10 @@ volatile float g_adc_to_voltage_b_0_5 (0.0f);
 volatile float g_centered_voltage_b_absp925(0.0f);
 volatile unsigned long g_us(0);
 
+
+
+// Declare the function to get the buffer address from C++
+extern uint32_t* get_timestamp_buffer_address(void);
 
 StepperMotor stepper = StepperMotor(
                                      &hspi2,        //  sensor spi
@@ -197,11 +200,11 @@ void update_ramp(void)
      }
 }
 
-extern "C"
-void timestamp_angle_reading(void)
-{
-    stepper.timestamp_angle_reading();
-}
+//extern "C"
+//void timestamp_angle_reading(void)
+//{
+ //   stepper.timestamp_angle_reading();
+//}
 
 extern "C"
 void wrapper_control_loop_25us(void)
@@ -211,6 +214,12 @@ void wrapper_control_loop_25us(void)
     {
         stepper.control_loop_25us();
     }
+}
+
+extern "C"
+void wrapper_reinit_dma_for_spi(void)
+{
+    AS5048A::reinit_dma_for_spi(); 
 }
 
 extern "C"
@@ -358,10 +367,12 @@ void StepperMotor::process_encoder_data()
 }
 #endif
 
+
 extern "C"
 void complete_spi_conversion()
 {
-       	stepper.conversion_complete();
+    // update_buffers sets spi_async_read_complete to true 
+    AS5048A::update_buffers(AS5048A::spi_as5048_register_value & ~0xC000, micros());
 }
 
 extern "C"
@@ -388,10 +399,7 @@ void cpp_main(void)
       DMA1_Stream0->CR |= DMA_SxCR_EN; // Manually enable if not set
   }
 
-
-
 //--------------
-
 
   uint32_t count(0);
   char char_buffer[50];
@@ -407,7 +415,7 @@ void cpp_main(void)
   is_foc_initialized = success;
 
 
-  unsigned long prev_us = _micros();
+  unsigned long prev_us = micros();
  // const uint32_t MICROSECONDS_PER_ITERATION(25);
   const uint32_t MICROSECONDS_PER_SECOND(1000000);
   const uint32_t ITERATIONS_PER_SECOND(MICROSECONDS_PER_SECOND/MICROSECONDS_PER_ITERATION);
@@ -428,7 +436,7 @@ void cpp_main(void)
   while (1)
   {
       static unsigned long prev_time = 0;
-      unsigned long curr_time    = _micros();
+      unsigned long curr_time    = micros();
       unsigned long elapsed_time = curr_time - prev_time;
       if(elapsed_time >= 500UL)  // MICROSECONDS_PER_ITERATION)
       {    
@@ -436,9 +444,9 @@ void cpp_main(void)
           prev_time = curr_time;
           g_us = elapsed_time;
 
-          if (stepper.async_read_complete())
+          if (stepper.async_read_complete()) // <--- TBD: find another way
           {
-             stepper.process_encoder_data();
+            // stepper.process_encoder_data();
           }
       }
   }

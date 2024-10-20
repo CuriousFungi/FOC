@@ -151,6 +151,23 @@ SECTIONS
 
   } >RAM_D1
 
+
+  .spi_buffers_4(NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.spi_buffers_4)
+    . = ALIGN(4);
+  } > RAM_D1 AT> RAM_D1
+
+  .spi_buffers_2(NOLOAD) :
+  {
+    . = ALIGN(2);
+    *(.spi_buffers_2)
+    . = ALIGN(2);
+  } > RAM_D1 AT> RAM_D1
+
+
+
   /* Uninitialized data section into "RAM" Ram type memory */
   . = ALIGN(4);
   .bss :
@@ -167,6 +184,8 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM_D1
 
+
+
   /* User_heap_stack section, used to check that there is enough "RAM" Ram  type memory left */
   ._user_heap_stack :
   {
@@ -177,6 +196,9 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM_D1
+
+
+
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :
