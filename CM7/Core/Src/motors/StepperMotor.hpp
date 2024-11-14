@@ -35,7 +35,11 @@ extern "C" {
 }
 #endif
 
-#include <deque>
+#include <vector>
+#include <cstddef>
+#include <cstdint>
+
+//#include <deque>
 #include <numeric>
 
 #define MICROSECONDS_PER_ITERATION (500)
@@ -47,11 +51,12 @@ extern "C" {
 #define US_TO_SEC_SCALING (1000000) // Convert microseconds to seconds for velocity calculation
 #define BUFFER_SIZE 10              // Circular buffer size for moving window
 
+#if 0
 class OffsetEstimator 
 {
 public:
     OffsetEstimator(size_t window_size)
-        : window_size_(window_size), sum_(0.0f) 
+        : window_size_(window_size), sum_(0.0f), cnt(0)
     {
     }
 
@@ -65,6 +70,7 @@ public:
         }
         window_.push_back(current_measurement - centerline_);
         sum_ += window_.back();
+        cnt++;
 
         // Calculate the average offset
         return sum_ / static_cast<float>(window_.size());
@@ -76,6 +82,59 @@ private:
     const float centerline_ = 2.5f;
     float sum_;
     std::deque<float> window_;
+    uint32_t cnt;
+};
+#endif
+
+// TODO: create cirulare queue class
+// TODO: refactor to use circular queue
+// TODO: move circular queue, offsetestimator, pid classes into seperate .hpp/.cpp files
+class OffsetEstimator
+{
+public:
+    OffsetEstimator(size_t window_size)
+        : window_size_(window_size),
+          window_(window_size, 0.0f),  // Pre-allocate to fixed size with initial values of 0.0
+          sum_(0.0f),
+          index_(0),
+          count_(0),
+          centerline_(2.5f)
+    {
+    }
+
+    float update(float current_measurement)
+    {
+        // Calculate the measurement adjusted by the centerline
+        float adjusted_measurement = current_measurement - centerline_;
+
+        // If the buffer is full, subtract the oldest value from sum_
+        if (count_ >= window_size_)
+        {
+            sum_ -= window_[index_];
+        }
+        else
+        {
+            count_++;  // Increase count until buffer is full
+        }
+
+        // Insert the new value into the ring buffer and add to sum_
+        window_[index_] = adjusted_measurement;
+        sum_ += adjusted_measurement;
+
+        // Move to the next index, wrapping if necessary
+        index_ = (index_ + 1) % window_size_;
+
+        // Calculate the average offset
+        return sum_ / static_cast<float>(count_);
+    }
+
+private:
+    const size_t window_size_;
+    std::vector<float> window_;
+    float sum_;
+    size_t index_;    // Current insertion index for the ring buffer
+    size_t count_;    // Current count of valid entries in buffer (up to window_size_)
+    const float centerline_;
 };
 
 
@@ -207,8 +266,6 @@ class StepperMotor
 	//-------------------------------------------------------------------------
     explicit
     StepperMotor( SPI_HandleTypeDef* hspi,
-                  GPIO_TypeDef*      p_sensor_chip_select_port,
-                  uint16_t           sensor_chip_select_pin,
                   int                pole_pairs,
                   float              phase_resistance,
                   float              KV,
@@ -268,18 +325,28 @@ class StepperMotor
     void move(float target = NOT_SET);             // was override;
 
 
+
+    uint32_t compute_time_difference(uint32_t current_time, uint32_t previous_time);
+    uint16_t get_as5048a_value(){return m_sensor.get_raw_count();}
+    //void reinit_dma_for_spi(){m_sensor.reinit_dma_for_spi();}
+    void update_buffers(uint16_t new_angle, uint32_t new_timestamp){m_sensor.update_buffers(new_angle,new_timestamp);}
+    void invalidate_as5048_cache(){m_sensor.invalidate_as5048_cache();}
+    void start_spi_conversion(){m_sensor.start_spi_conversion();}
+    void spi_reset_in_progress(){m_sensor.spi_reset_in_progress();}
+
     void update_target_rad_per_sec(float rps);
     void control_loop_25us();
     void sample_as5048_25us();
     float convert_count_to_shaft_angle(uint16_t count);
     float calculate_delta_angle(uint16_t last_angle, uint16_t current_angle);
-    void conversion_complete(){m_sensor.conversion_complete();}
+   // void conversion_complete(){m_sensor.conversion_complete();}
    // void process_encoder_data(){m_sensor.process_encoder_data();}
    // void timestamp_angle_reading(){m_sensor.timestamp();}
     bool async_read_complete(){return m_sensor.async_read_complete();}
 
     float read_angle_radians_from_buffer_with_offset();
-
+    void update_samples(uint16_t raw_count);
+    bool is_sample_valid(uint16_t raw_value){m_sensor.is_sample_valid(raw_value);}
 
     
     //-------------------------------------------------------------------------

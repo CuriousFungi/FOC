@@ -278,6 +278,7 @@ __weak HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
   {
     HAL_NVIC_SetPriority(SysTick_IRQn, TickPriority, 0U);
     uwTickPrio = TickPriority;
+    HAL_NVIC_EnableIRQ(SysTick_IRQn);
   }
   else
   {
@@ -402,6 +403,7 @@ HAL_TickFreqTypeDef HAL_GetTickFreq(void)
   * @param Delay  specifies the delay time length, in milliseconds.
   * @retval None
   */
+
 __weak void HAL_Delay(uint32_t Delay)
 {
   uint32_t tickstart = HAL_GetTick();

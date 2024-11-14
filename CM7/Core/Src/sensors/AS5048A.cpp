@@ -8,17 +8,20 @@
 
 #include <cmath>  // For std::sin and M_PI
 
+extern "C"
+{
+   extern void Disable_TIM4_Interrupt(void);
+}
 
-//extern "C" {
-//    #include "arm_math.h"
-//} // Include CMSIS-DSP
 
+extern TIM_HandleTypeDef htim1;
 
 volatile uint16_t g_as5048_u16_angle(0);
 volatile float g_as5048_velocity(0.0f);
 
 extern volatile float g_experimental_velocity;
 
+extern bool is_foc_initialized;
 
 #include <algorithm>
 
@@ -31,19 +34,23 @@ extern UART_HandleTypeDef huart2;
 #endif
 
 extern DAC_HandleTypeDef hdac1;
-extern SPI_HandleTypeDef hspi2;
+//extern SPI_HandleTypeDef hspi2;
+extern SPI_HandleTypeDef hspi4;
 
 #include <string.h>
 
 // define the static members
-uint32_t AS5048A::spi_timestamp_buffer[SPI_BUFFER_SIZE]   __attribute__ ((section(".spi_buffers_4"))) ;
-uint16_t AS5048A::spi_angle_buffer[SPI_BUFFER_SIZE]       __attribute__ ((section(".spi_buffers_2"))) ;
-uint16_t AS5048A::spi_as5048_register_value  __attribute__ ((section(".spi_buffers_4"))) =0;
-uint16_t AS5048A::spi_index_curr                      __attribute__ ((section(".spi_buffers_2"))) =0;       
-uint16_t AS5048A::spi_index_prev                      __attribute__ ((section(".spi_buffers_2"))) =0;       
+uint32_t AS5048A::spi_timestamp_buffer[SPI_BUFFER_SIZE];
+uint16_t AS5048A::spi_angle_buffer[SPI_BUFFER_SIZE];
 
-bool     AS5048A::spi_async_read_complete                 __attribute__ ((section(".spi_buffers_4"))) ;
+uint16_t AS5048A::spi_index_curr;
+uint16_t AS5048A::spi_index_prev;      
+
 bool     AS5048A::clear_error_in_progress;
+
+// used prevents removal by optimizer
+volatile uint16_t __attribute__(( aligned(32), section(".dma_rx_buffer2"), used)) AS5048A::m_spi_as5048_rx_buff[NUM_RX_READINGS];
+volatile uint16_t __attribute__(( aligned(32), section(".dma_tx_buffer2"), used)) AS5048A::m_spi_as5048_tx_buff[NUM_TX_READINGS] ;
 
 
 //=============================================================================
@@ -68,7 +75,8 @@ uint16_t readWithDeadband(uint16_t count)
     
     const uint16_t  DEADBAND_THRESHOLD = 5;  // Noise threshold for stationary encoder
     
-    if (abs(static_cast<int>(count) - static_cast<int>(previous_count)) > DEADBAND_THRESHOLD) {
+    if (abs(static_cast<int>(count) - static_cast<int>(previous_count)) > DEADBAND_THRESHOLD) 
+    {
         previous_count = count;  // Update only if change exceeds the threshold
     }
     return previous_count;
@@ -108,7 +116,6 @@ uint16_t convertToSineDAC(uint16_t count)
     // Clamp dac_value to avoid going out of range
     dac_value = std::min(dac_value, DAC_MAX_VALUE);    
 
-    
 
     // Scale sine value to the DAC range centered around DAC_MIDPOINT
     //uint16_t dac_value = static_cast<uint16_t>(DAC_MIDPOINT + sine_value * (DAC_MAX_VALUE / 2.0f));
@@ -156,9 +163,7 @@ extern "C"
 //-----------------------------------------------------------------------------
 //                          CTor
 //-----------------------------------------------------------------------------
-AS5048A::AS5048A(    SPI_HandleTypeDef* hspi, 
-                    GPIO_TypeDef*      p_chip_select_port,
-                    uint16_t           chip_select_pin)
+AS5048A::AS5048A(    SPI_HandleTypeDef* hspi)
 :   TWO_PI(6.28318530718f)
 ,   BIT_RESOLUTION(14)
 ,   READ_WRITE_BIT(1<<BIT_RESOLUTION)
@@ -171,8 +176,6 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
 ,   COUNTS_PER_HALF_REVOLUTION(COUNTS_PER_REVOLUTION >> 1)
 ,   AS5048_MAX(0x4000)
 ,   m_hspi(hspi)
-,   m_p_chip_select_port(p_chip_select_port)
-,   m_chip_select_pin(chip_select_pin)
 //,   m_clock_speed(1000000)
 ,   m_position_count(0)
 ,   m_error_detected(false)
@@ -189,18 +192,20 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
 
 ,   m_prev_microseconds(0)
 ,   m_invert_output(false)
-//,   spi_async_read_complete(true)
-//,   spi_as5048_register_value(0)
+//,   m_spi_as5048_rx_buff(0)
 //,   spi_current_index(0)
+, m_spi_async_read_complete(true)
+, m_spi_reset_in_progress(false)
 {
     init_SPI_buffers();
-    HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
+    //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
 
     AS5048A::clear_error_in_progress = false;
 
     AS5048A::spi_index_curr= 0;
     AS5048A::spi_index_prev = 0;
 
+    AS5048A::m_spi_as5048_rx_buff[0]  = 0xDEAD;
 
     // only for debug purpose
     memset(spi_timestamp_buffer,0xFFFFFFFF, AS5048A::SPI_BUFFER_SIZE*sizeof(uint32_t));
@@ -208,169 +213,19 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi,
     return;
 }
 
-
-extern DMA_HandleTypeDef hdma_spi2_rx;
-extern DMA_HandleTypeDef hdma_spi2_tx;
-
-
-void AS5048A::reinit_dma_for_spi() 
+void AS5048A::check_health()
 {
-    spi_async_read_complete = true;
-#if 0
-    // Disable DMA to reset it
-    __HAL_DMA_DISABLE(&hdma_spi2_rx);
-    __HAL_DMA_DISABLE(&hdma_spi2_tx);
+   //If an SPI error was detected in an interrupt context, the SPI was disabled.
+   // re-enabling the SPI from within an interrupt context is unpredictable. So 
+   // a flag was set so that the SPI can be re-enabled in the appplication context.
+   if(m_spi_reset_in_progress)
+   {
+      m_spi_reset_in_progress   = false;
+      m_spi_async_read_complete = true;
 
-
-    while (((DMA_Stream_TypeDef *)(hdma_spi2_rx.Instance))->CR & DMA_SxCR_EN)
-    {
-        // Wait for DMA to fully disable
-    }
-    while (((DMA_Stream_TypeDef *)(hdma_spi2_tx.Instance))->CR & DMA_SxCR_EN) 
-    {
-        // Wait for TX DMA to fully disable
-    }
-
-
-    // Clear relevant flags
-    __HAL_DMA_CLEAR_FLAG(&hdma_spi2_rx, DMA_FLAG_TCIF0_4 | DMA_FLAG_HTIF0_4 | DMA_FLAG_TEIF0_4);
-    __HAL_DMA_CLEAR_FLAG(&hdma_spi2_tx, DMA_FLAG_TCIF0_4 | DMA_FLAG_HTIF0_4 | DMA_FLAG_TEIF0_4);
-
-    // Set new parameters if needed, e.g., buffer address, length
-    if (HAL_DMA_Start(&hdma_spi2_rx, (uint32_t)&.Instance->RXDR, (uint32_t)&spi_as5048_register_value, 1) != HAL_OK)
-    {
-        // Handle DMA start failure (e.g., set error flag, retry, or log the error)
-    }
-
-    uint16_t READ_ANGLE_COMMAND(0xFFFF);
-
-
-    // Start TX DMA
-    if (HAL_DMA_Start(&hdma_spi2_tx, (uint32_t)&READ_ANGLE_COMMAND, (uint32_t)&hspi2.Instance->TXDR, 1) != HAL_OK) 
-    {
-         // Handle TX DMA start failure
-    }
-
-
-    // Enable DMA again
-    __HAL_DMA_ENABLE(&hdma_spi2_rx);
-    __HAL_DMA_ENABLE(&hdma_spi2_tx);
-    #else
-    // Check if there's an error in the SPI peripheral
-    if (HAL_SPI_GetError(&hspi2) != HAL_SPI_ERROR_NONE) {
-        // Deinitialize and reinitialize the SPI to recover
-        HAL_SPI_DeInit(&hspi2);
-        HAL_SPI_Init(&hspi2);
-    }
-    uint16_t READ_ANGLE_COMMAND(0xFFFF);
-    // Attempt to reinitiate DMA transfer if needed
-    if (HAL_SPI_TransmitReceive_DMA(&hspi2,
-           (uint8_t*)&READ_ANGLE_COMMAND, 
-           (uint8_t*)&spi_as5048_register_value, 
-           1) != HAL_OK) 
-    {
-        // Handle DMA reinit failure
-        //printf("Failed to restart SPI DMA transfer\n");
-    }
-    #endif
+       __HAL_SPI_ENABLE(m_hspi);
+   }
 }
-
-
-
-#if 0
-//-----------------------------------------------------------------------------
-//                                update
-//
-//                            Pre DMA approach
-//-----------------------------------------------------------------------------
-void AS5048A::update()
-{
-    const float MICROSECONDS_PER_SECOND = 1000000.0f;
-    const float MAX_RADIANS_CHANGE = TWO_PI * 0.2f; // Example threshold to detect large spikes
-    const float ALPHA = 0.1f;  // Smoothing factor for radians per second
-
-    float curr_radians = read_angle_radians();
-    uint32_t curr_microseconds = micros();
-
-    // Handle rollover of the microsecond counter
-    uint32_t delta_microseconds;
-    if (curr_microseconds < m_prev_microseconds) {
-        delta_microseconds = (UINT32_MAX - m_prev_microseconds) + curr_microseconds + 1;
-    } else {
-        delta_microseconds = curr_microseconds - m_prev_microseconds;
-    }
-
-    float delta_radians = curr_radians - m_prev_angle_radians;
-
-    // Handle overflow/underflow if the angle crosses the wraparound point
-    if (fabs(delta_radians) > (0.8f * TWO_PI)) {
-        if (delta_radians > 0.0f) {
-            m_full_rotations -= 1;
-            delta_radians += TWO_PI;
-        } else {
-            m_full_rotations += 1;
-            delta_radians -= TWO_PI;
-        }
-    }
-
-    // Combine full rotations into delta radians
-    int32_t delta_rotations = m_full_rotations - m_prev_full_rotations;
-    float delta_rotation_radians = TWO_PI * static_cast<float>(delta_rotations);
-    float delta_radians_combined = delta_rotation_radians + delta_radians;
-
-    // Outlier rejection: Ignore unrealistic large spikes in delta radians
-    if (fabs(delta_radians_combined) > MAX_RADIANS_CHANGE) {
-        delta_radians_combined = 0.0f; // Ignore this update if it's an outlier
-    }
-
-    // Calculate radians per second with smoothing
-    float delta_microseconds_f = static_cast<float>(delta_microseconds);
-    float instantaneous_radians_per_second = (MICROSECONDS_PER_SECOND * delta_radians_combined) / delta_microseconds_f;
-
-    // Smooth the radians per second to reduce spikes
-    float radians_per_second = ALPHA * instantaneous_radians_per_second + (1.0f - ALPHA) * m_prev_radians_per_sec;
-
-    // Update state variables
-    m_prev_full_rotations = m_full_rotations;
-    m_prev_angle_radians = curr_radians;
-    m_prev_radians_per_sec = radians_per_second;
-    m_prev_microseconds = curr_microseconds;
-}
-#endif
-
-#if 0
-float AS5048A::calculate_delta_angle(uint16_t last_angle, uint16_t current_angle)
-{
-	const uint16_t AS5048_MAX(0x4000);
-    int32_t delta_angle = current_angle - last_angle;
-
-    if (delta_angle > AS5048_MAX / 2) {
-        delta_angle -= AS5048_MAX;  // Handle rollover
-    }
-    else if (delta_angle < -AS5048_MAX / 2) {
-        delta_angle += AS5048_MAX;
-    }
-
-    // Convert to radians
-    return (static_cast<float>(delta_angle) * 2.0f * M_PI) / static_cast<float>(AS5048_MAX);
-}
-#endif
-
-#if 0
-//-----------------------------------------------------------------------------
-//                          get_radians_per_second
-//-----------------------------------------------------------------------------
-float AS5048A::get_radians_per_second() 
-{
-    return m_prev_radians_per_sec;
-}
-
-
-void AS5048A::set_prev_radians_per_sec(float val)
-{
-    m_prev_radians_per_sec = val;
-}
-#endif
 
 //-----------------------------------------------------------------------------
 //                          invert_output
@@ -419,28 +274,16 @@ float AS5048A::get_angle_radians()
   return read_angle_radians_from_buffer();
 }
 
-#if 0
-//-----------------------------------------------------------------------------
-//                       convert_count_to_degrees
-//-----------------------------------------------------------------------------
-float AS5048A::convert_count_to_degrees(uint16_t count)
-{
-    
-  float  f_count(static_cast<float>(count));
-    
-  return f_count * 360.0f / static_cast<float>(COUNTS_PER_REVOLUTION);
-}
-#endif
-
-
-
 //-----------------------------------------------------------------------------
 //                       conversion_complete
 //-----------------------------------------------------------------------------
+#if 0
 void AS5048A::conversion_complete()
 {    
     update_buffers(spi_as5048_register_value & ~0xC000, micros());
 }
+#endif
+
 
 //-----------------------------------------------------------------------------
 //                          get_state
@@ -567,7 +410,7 @@ uint16_t AS5048A::read_register(uint16_t reg_address)
 return 0xBEEF;
 
 
-	uint16_t command = 0x4000;    // PAR = 0 R/W=R
+	 alignas(4) uint16_t command = 0x4000;    // PAR = 0 R/W=R
 	command = command | reg_address;
 
 	//Add a parity bit on the the MSB
@@ -576,18 +419,20 @@ return 0xBEEF;
     const uint32_t TIMEOUT(1000); // rather than HAL_MAX_DELAY
 
 
-    HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
+    //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
 
-    uint16_t register_value;
+    __attribute__((aligned(4)))  uint16_t register_value;
+    
     HAL_SPI_TransmitReceive( m_hspi,
                         reinterpret_cast<uint8_t*>(&command),
 						reinterpret_cast<uint8_t*>(&register_value),
                         1,
   					  TIMEOUT);
+    
     while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
 
 
-    HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
+    //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
 
     m_error_detected = (register_value & 0x4000);
 
@@ -628,48 +473,58 @@ void AS5048A::read_register_async(uint16_t reg_address)
 #endif
 
 //-----------------------------------------------------------------------------
+//                             start_spi_conversion
+//
+// Caution: This is invoked from within an interrupt context
+//-----------------------------------------------------------------------------
+//#define BUFFERSIZE 1
+
+//#define BUFFER_ALIGNED_SIZE (((BUFFERSIZE+31)/32)*32)
+//ALIGN_32BYTES(uint8_t aRxBuffer[BUFFER_ALIGNED_SIZE]);
+extern uint8_t * aRxBuffer;
+
+extern DMA_HandleTypeDef hdma_spi4_rx;
+extern DMA_HandleTypeDef hdma_spi4_tx;
+
+
+void AS5048A::start_spi_conversion()
+{
+        
+    if(!m_spi_async_read_complete) return;
+
+    alignas(32) uint16_t READ_ANGLE_COMMAND(0xFFFF);
+
+    m_spi_as5048_tx_buff[0] = READ_ANGLE_COMMAND;
+    __DMB(); 
+
+    m_spi_async_read_complete  = false; 
+    AS5048A::m_spi_as5048_rx_buff[0] = 0xDEAD;
+    if(HAL_OK !=  HAL_SPI_TransmitReceive_DMA(&hspi4,   //m_hspi,
+                          //reinterpret_cast<uint8_t*>(&READ_ANGLE_COMMAND),
+                          const_cast<uint8_t*>(reinterpret_cast<volatile uint8_t*>(&AS5048A::m_spi_as5048_tx_buff[0])),
+                          const_cast<uint8_t*>(reinterpret_cast<volatile uint8_t*>(&AS5048A::m_spi_as5048_rx_buff[0])),
+                          1))
+    {
+      // m_spi_async_read_complete = true;
+       return;
+    }
+}
+
+
+//-----------------------------------------------------------------------------
 //                              async_read_angle
 //
 //                      HAL_SPI_TransmitReceive_DMA version
+//
+// Caution: This is invoked from within an interrupt context
 //-----------------------------------------------------------------------------
 void AS5048A::async_read_angle()
 { 
-    if(!spi_async_read_complete) return;
-
-    // reset guard conditions
-    spi_async_read_complete = false; 
-
-    uint16_t READ_ANGLE_COMMAND(0xFFFF);
+    if(!m_spi_async_read_complete) return;
     
     if (HAL_SPI_GetState(m_hspi) == HAL_SPI_STATE_READY)
     {
-    	 __HAL_SPI_ENABLE_IT(m_hspi, (SPI_IT_RXNE | SPI_IT_ERR));
-         
-        if(HAL_OK !=  HAL_SPI_TransmitReceive_DMA(m_hspi, 
-                                   reinterpret_cast<uint8_t*>(&READ_ANGLE_COMMAND),
-                                   reinterpret_cast<uint8_t*>(&spi_as5048_register_value), 
-                                   1))
-        {
-            spi_async_read_complete = true;
-            return;
-        }
-
-#if 0
-        if (__HAL_SPI_GET_FLAG(m_hspi, SPI_FLAG_OVR))
-        {
-            printf("SPI Overrun Error Detected\n");
-            __HAL_SPI_CLEAR_OVRFLAG(m_hspi);
-        }
-        if (__HAL_SPI_GET_FLAG(m_hspi, SPI_FLAG_MODF))
-        {
-            printf("SPI Mode Fault Error Detected\n");
-            __HAL_SPI_CLEAR_MODFFLAG(m_hspi);
-        }  
-#endif
-    }
-    else
-    {
-        // SPI is busy
+         start_spi_conversion();
     }
 }
 
@@ -678,7 +533,7 @@ void AS5048A::async_read_angle()
 //-----------------------------------------------------------------------------
 void AS5048A::init_SPI_buffers(void)
 {
-    AS5048A::spi_as5048_register_value = 0;
+    AS5048A::m_spi_as5048_rx_buff[0] = 0;
     // Initialize buffers to zero
    memset(spi_timestamp_buffer, 0, SPI_BUFFER_SIZE * sizeof(spi_timestamp_buffer[0]));
    //memset(spi_angle_buffer,     0, SPI_BUFFER_SIZE * sizeof(spi_angle_buffer[0]));
@@ -687,11 +542,13 @@ void AS5048A::init_SPI_buffers(void)
 
 //-----------------------------------------------------------------------------
 //                         update_buffers
+//
+// Caution: Invoked from within interrupt context
 //-----------------------------------------------------------------------------
 void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 {    
-    __disable_irq();
-
+  m_spi_async_read_complete = true;
+#if 0
     // Update the current position in the circular buffer
     spi_angle_buffer[    spi_index_curr] = new_angle;
     spi_timestamp_buffer[spi_index_curr] = new_timestamp;
@@ -701,11 +558,9 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
     spi_index_curr = (spi_index_curr + 1) % SPI_BUFFER_SIZE;
 
     // Mark that data is ready for processing
-    spi_async_read_complete = true;
-    
+    //m_spi_async_read_complete = true;
+#endif    
     g_as5048_u16_angle = new_angle; 
-
-    __enable_irq();
 }
 
 
@@ -714,10 +569,18 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 //-----------------------------------------------------------------------------
 float AS5048A::read_angle_radians_from_buffer()
 {
-    HAL_NVIC_DisableIRQ(SPI2_IRQn); 
-    uint16_t latest_angle_u16 = spi_angle_buffer[spi_index_prev];
-    HAL_NVIC_EnableIRQ(SPI2_IRQn);
+	// Enter Critical region
+	uint32_t prim = __get_PRIMASK();  // Backup the current interrupt state
+	__disable_irq();                   // Disable all interrupts
 
+    __DMB();
+    __DSB();
+    SCB_InvalidateDCache_by_Addr((uint32_t *)&AS5048A::m_spi_as5048_rx_buff, sizeof(m_spi_as5048_rx_buff[0]));
+    uint16_t latest_angle_u16 = m_spi_as5048_rx_buff[0];
+
+    // exit critical region
+    __set_PRIMASK(prim);               // Restore the interrupt state
+    __enable_irq();
 
     // Convert the 14-bit angle data to radians
     // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
@@ -787,6 +650,7 @@ calculate_time_difference( uint32_t current_timestamp,
 //-----------------------------------------------------------------------------
 void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
 {
+ // PRP   
     int32_t  angle_diff_total = 0;    // Accumulate total angular difference
     uint32_t time_total_us    = 0;    // Accumulate total time difference (in microseconds)
 
@@ -843,54 +707,12 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
 }
 #endif
 
-
-
-
-
-
-#if 0
-bool AS5048A::request_raw_count()
-{
-    bool success(false);
-
-    
-    if(spi_async_read_complete)
-    {
-	   spi_async_read_complete = false;  // Reset the flag
-
-       // Initiate the SPI read
-       read_register_async(value_of(AS5048A_REGISTERS::ANGLE_14_BITS) );
-       success = true;
-    }
-
-    return success;
-}
-
-
-uint16_t AS5048A::get_current_raw_count()
-{
-   return spi_as5048_register_value;
-}
-
-
-uint16_t AS5048A::blocking_get_raw_count()
-{
-    #if 0
-    while(!request_raw_count());
-    while(!async_read_complete());
-    return get_current_raw_count();
-    #else
-    return get_raw_count();
-    #endif
-}
-#endif
-
 //-----------------------------------------------------------------------------
 //                            get_raw_count
 //-----------------------------------------------------------------------------
 uint16_t AS5048A::get_raw_count()
-{
-    return spi_as5048_register_value;
+{      
+    return AS5048A::m_spi_as5048_rx_buff[0];
 }
 
 //-----------------------------------------------------------------------------
@@ -917,10 +739,10 @@ return 0xDEAD;
 	dat[0] = ( command >> 8 ) & 0xFF;
 
 	//Start the write command with the target address
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit(m_hspi, (uint8_t *)&dat, 2, 0xFFFF);
 	while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
 
 	uint16_t dataToSend = 0b0000000000000000;
 	dataToSend |= data;
@@ -931,20 +753,20 @@ return 0xDEAD;
 	dat[0] = ( command >> 8 ) & 0xFF;
 
 	//Now send the data packet
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit(m_hspi, (uint8_t *)&dat, 2, 0xFFFF);
 	while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
 
 	//Send a NOP to get the new data in the register
 	dat[1] = 0x00;
 	dat[0] = 0x00;
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit(m_hspi, (uint8_t *)&dat, 2, 0xFFFF);
 	while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
 	HAL_SPI_Receive(m_hspi, (uint8_t *)&dat, 2, 0xFFFF);
 	while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
-	HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
 
 	//Return the data, stripping the parity and error bits
 	return (( ( dat[1] & 0xFF ) << 8 ) | ( dat[0] & 0xFF )) & ~0xC000;
@@ -980,29 +802,6 @@ uint8_t AS5048A::spiCalcEvenParity(uint16_t value)
 	return cnt & 0x1;
 }
 
-#if 0
-//-----------------------------------------------------------------------------
-//                      get_counts_advanced_past_position
-//-----------------------------------------------------------------------------
-int16_t AS5048A::get_counts_advanced_past_position()
-{
-	uint16_t count(get_raw_count());
-
-    //char buff[50];
-    //sprintf(buff, "raw count B: 0x%X\r\n", count);
-    //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
-
-	int16_t rotation = static_cast<int16_t>(count)
-			         - static_cast<int16_t>(m_position_count);
-
-	if (rotation > COUNTS_PER_HALF_REVOLUTION)
-	{
-		rotation = -((COUNTS_PER_REVOLUTION) - rotation);
-	}
-
-	return rotation;
-}
-#endif
 
 //-----------------------------------------------------------------------------
 //                      getMechanicalAngle

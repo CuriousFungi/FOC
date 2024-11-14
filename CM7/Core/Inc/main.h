@@ -48,6 +48,7 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
+
 void MX_TIM1_Init(void);
 void MX_TIM8_Init(void);
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
@@ -56,7 +57,7 @@ void Error_Handler(void);
 //void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
 //uint32_t read_adc_value(void);
 
-void RefreshWatchdog(void);
+//void RefreshWatchdog(void);
 
 
 /* USER CODE END EM */
@@ -79,10 +80,12 @@ void Error_Handler(void);
 #define STLINK_TX_GPIO_Port GPIOD
 #define USART_TX_Pin GPIO_PIN_5
 #define USART_TX_GPIO_Port GPIOD
-#define SPI2_CS_Pin GPIO_PIN_6
-#define SPI2_CS_GPIO_Port GPIOD
+//#define SPI2_CS_Pin GPIO_PIN_6
+//#define SPI2_CS_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi);
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi);
 
 /* USER CODE END Private defines */
 

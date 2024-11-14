@@ -24,21 +24,21 @@
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.swv_trace_hclk" value="400000000"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.launch.useRemoteTarget" value="true"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.launch.vector_table" value=""/>
-    <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.launch.verify_flash_download" value="true"/>
+    <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.launch.verify_flash_download" value="false"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.cti_allow_halt" value="false"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.cti_signal_halt" value="false"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.enable_logging" value="false"/>
-    <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.enable_max_halt_delay" value="false"/>
+    <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.enable_max_halt_delay" value="true"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.enable_shared_stlink" value="true"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.frequency" value="8000"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.frequency" value="4000"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.halt_all_on_reset" value="false"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.log_file" value="C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Debug\st-link_gdbserver_log.txt"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.low_power_debug" value="disable"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.max_halt_delay" value="2"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.reset_strategy" value="system_reset"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.low_power_debug" value="enable"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.max_halt_delay" value="5"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.reset_strategy" value="connect_under_reset"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.stlink_check_serial_number" value="true"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.stlink_txt_serial_number" value="003600313532510931333430"/>
-    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.watchdog_config" value="none"/>
+    <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlink.watchdog_config" value="enable"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.debug.stlinkenable_rtos" value="false"/>
     <stringAttribute key="com.st.stm32cube.ide.mcu.debug.stlinkrestart_configurations" value="{&quot;fVersion&quot;:1,&quot;fItems&quot;:[{&quot;fDisplayName&quot;:&quot;Reset&quot;,&quot;fIsSuppressible&quot;:false,&quot;fResetAttribute&quot;:&quot;Software system reset&quot;,&quot;fResetStrategies&quot;:[{&quot;fDisplayName&quot;:&quot;Software system reset&quot;,&quot;fLaunchAttribute&quot;:&quot;system_reset&quot;,&quot;fGdbCommands&quot;:[&quot;monitor reset\r\n&quot;],&quot;fCmdOptions&quot;:[&quot;-g&quot;]},{&quot;fDisplayName&quot;:&quot;Hardware reset&quot;,&quot;fLaunchAttribute&quot;:&quot;hardware_reset&quot;,&quot;fGdbCommands&quot;:[&quot;monitor reset hardware\r\n&quot;],&quot;fCmdOptions&quot;:[&quot;-g&quot;]},{&quot;fDisplayName&quot;:&quot;Core reset&quot;,&quot;fLaunchAttribute&quot;:&quot;core_reset&quot;,&quot;fGdbCommands&quot;:[&quot;monitor reset core\r\n&quot;],&quot;fCmdOptions&quot;:[&quot;-g&quot;]},{&quot;fDisplayName&quot;:&quot;None&quot;,&quot;fLaunchAttribute&quot;:&quot;no_reset&quot;,&quot;fGdbCommands&quot;:[],&quot;fCmdOptions&quot;:[&quot;-g&quot;]}],&quot;fGdbCommandGroup&quot;:{&quot;name&quot;:&quot;Additional commands&quot;,&quot;commands&quot;:[]},&quot;fStartApplication&quot;:true}]}"/>
     <booleanAttribute key="com.st.stm32cube.ide.mcu.rtosproxy.enableRtosProxy" value="false"/>
@@ -49,7 +49,7 @@
     <intAttribute key="com.st.stm32cube.ide.mcu.rtosproxy.rtosProxyPort" value="60000"/>
     <booleanAttribute key="org.eclipse.cdt.debug.gdbjtag.core.doHalt" value="false"/>
     <booleanAttribute key="org.eclipse.cdt.debug.gdbjtag.core.doReset" value="false"/>
-    <stringAttribute key="org.eclipse.cdt.debug.gdbjtag.core.initCommands" value=""/>
+    <stringAttribute key="org.eclipse.cdt.debug.gdbjtag.core.initCommands" value="set *(unsigned int*)0x52002020 |= 0x00020000&#13;&#10;set *(unsigned int*)0x52002020 |= 0x00040000&#13;&#10;"/>
     <stringAttribute key="org.eclipse.cdt.debug.gdbjtag.core.ipAddress" value="localhost"/>
     <stringAttribute key="org.eclipse.cdt.debug.gdbjtag.core.jtagDeviceId" value="com.st.stm32cube.ide.mcu.debug.stlink"/>
     <stringAttribute key="org.eclipse.cdt.debug.gdbjtag.core.pcRegister" value=""/>
@@ -78,6 +78,6 @@
     <listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_TYPES">
         <listEntry value="4"/>
     </listAttribute>
-    <stringAttribute key="org.eclipse.dsf.launch.MEMORY_BLOCKS" value="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;no&quot;?&gt;&lt;memoryBlockExpressionList context=&quot;reserved-for-future-use&quot;&gt;&lt;gdbmemoryBlockExpression address=&quot;603982848&quot; label=&quot;0x24000c00&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;603983024&quot; label=&quot;0x24000cB0&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;603980338&quot; label=&quot;0x24000232&quot;/&gt;&lt;/memoryBlockExpressionList&gt;"/>
+    <stringAttribute key="org.eclipse.dsf.launch.MEMORY_BLOCKS" value="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;no&quot;?&gt;&lt;memoryBlockExpressionList context=&quot;reserved-for-future-use&quot;&gt;&lt;gdbmemoryBlockExpression address=&quot;603982848&quot; label=&quot;0x24000c00&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;603983024&quot; label=&quot;0x24000cB0&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;603980338&quot; label=&quot;0x24000232&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604503756&quot; label=&quot;0x2407fecc&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;805568544&quot; label=&quot;0x30040020&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604504001&quot; label=&quot;0x2407ffc1&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604503836&quot; label=&quot;0x2407ff1c&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;805568768&quot; label=&quot;0x30040100&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;805568512&quot; label=&quot;0x30040000&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;805306400&quot; label=&quot;0x30000020&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;603979776&quot; label=&quot;0x24000000&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604145652&quot; label=&quot;0x240287f4&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604504064&quot; label=&quot;0x24080000&quot;/&gt;&lt;gdbmemoryBlockExpression address=&quot;604146296&quot; label=&quot;0x24028a78&quot;/&gt;&lt;/memoryBlockExpressionList&gt;"/>
     <stringAttribute key="process_factory_id" value="com.st.stm32cube.ide.mcu.debug.launch.HardwareDebugProcessFactory"/>
 </launchConfiguration>

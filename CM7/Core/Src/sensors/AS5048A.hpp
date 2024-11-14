@@ -16,6 +16,10 @@ extern "C" {
 #include "stm32h7xx_hal_rcc.h"
 #include "stm32h7xx_hal_gpio.h"
 
+#define NUM_RX_READINGS 2 //16
+#define NUM_TX_READINGS 2 //16
+
+  //  typedef volatile uint16_t DMAAlignedType __attribute__((aligned(4), section(".dma_rx_buffer"), used));
 
 #ifdef __cplusplus
 }
@@ -63,24 +67,18 @@ class AS5048A
     
     // declare the static members
     static constexpr size_t SPI_BUFFER_SIZE = 20;  // 500 uS/25uS
-    static uint32_t spi_timestamp_buffer[SPI_BUFFER_SIZE]   __attribute__ ((section(".spi_buffers_4"))) ;
-    static uint16_t spi_angle_buffer[SPI_BUFFER_SIZE]       __attribute__ ((section(".spi_buffers_2"))) ;
-    static uint16_t spi_as5048_register_value               __attribute__ ((section(".spi_buffers_4"))) ;
-    static uint16_t spi_index_curr                       __attribute__ ((section(".spi_buffers_2"))) ;       
-    static uint16_t spi_index_prev                       __attribute__ ((section(".spi_buffers_2"))) ;       
-
-    static bool     spi_async_read_complete                 __attribute__ ((section(".spi_buffers_4"))) ;
-
+    static uint32_t spi_timestamp_buffer[SPI_BUFFER_SIZE];
+    static uint16_t spi_angle_buffer[SPI_BUFFER_SIZE]; 
+    
+    static uint16_t spi_index_curr ;     
+    static uint16_t spi_index_prev ;      
 
     
     static  bool   clear_error_in_progress;
     //-------------------------------------------------------------------------
     //                              CTOR
     //-------------------------------------------------------------------------
-    AS5048A(
-                               SPI_HandleTypeDef* hspi, 
-                               GPIO_TypeDef*      p_chip_select_port,
-                               uint16_t           chip_select_pin);
+    AS5048A(SPI_HandleTypeDef* hspi);
 
 
     //-------------------------------------------------------------------------
@@ -103,49 +101,40 @@ class AS5048A
     //-------------------------------------------------------------------------
     bool error_detected();
 
+    void check_health();
     
-    static void reinit_dma_for_spi(); 
+    //void reinit_dma_for_spi(); 
+    void   start_spi_conversion();
 
     uint16_t get_errors();
     void     clear_error();
     uint8_t  get_diagnostic();
     
     float    get_mechanical_phase_angle_radians();
-    //float    get_accumulated_radians();
 
-    // TODO temporarily public
-    //void     delay_microseconds(volatile uint32_t microseconds);
-
-    float read_angle_radians();
- 
+    float    read_angle_radians();
+    bool     is_sample_valid(uint16_t value){return (0 == value &0x4000);}
     
-    void  invert_output(bool invert);
-  bool     is_direction_invert(){return m_invert_output;} // Temporary bridge
+    void     invert_output(bool invert);
+    bool     is_direction_invert(){return m_invert_output;} // Temporary bridge
 
-  uint16_t get_raw_count();
-  //void set_prev_radians_per_sec(float val);
-  void conversion_complete();
-  //void read_register_async(uint16_t reg_address);
-  void calculate_velocity_from_buffer(struct Sample &current_sample);
-  static void update_buffers(uint16_t new_angle, uint32_t new_timestamp);
-  void init_SPI_buffers(void);
-  //void process_encoder_data();
-  //float calculate_delta_angle(uint16_t last_angle, uint16_t current_angle);
-  bool async_read_complete(){return spi_async_read_complete;}
-  void set_async_read_complete(){spi_async_read_complete = true;}
-  //bool request_raw_count();
-  //uint16_t get_current_raw_count();
-  //uint16_t blocking_get_raw_count();
-  float read_angle_radians_from_buffer();
-  float read_radians_with_direction();
+    uint16_t get_raw_count();
+    void     calculate_velocity_from_buffer(struct Sample &current_sample);
+    void     update_buffers(uint16_t new_angle, uint32_t new_timestamp);
+    void     init_SPI_buffers(void);
+    bool     async_read_complete(){return m_spi_async_read_complete;}
+    void     set_async_read_complete(){m_spi_async_read_complete = true;}
+    void     spi_reset_in_progress(){m_spi_reset_in_progress = true;}
+    float    read_angle_radians_from_buffer();
+    float    read_radians_with_direction();
+    void     async_read_angle();
+    uint16_t get_count(){return spi_angle_buffer[spi_index_prev];}
+    void     invalidate_as5048_cache()
+    {
+        SCB_InvalidateDCache_by_Addr((uint32_t*)AS5048A::m_spi_as5048_rx_buff, 32);
+    }
 
-  void async_read_angle();
-
-  uint16_t get_count(){return spi_angle_buffer[spi_index_prev];}
-
-  uint32_t calculate_time_difference(uint32_t current_timestamp, uint32_t last_timestamp);
-
-  //  float read_angle_radians();
+    uint32_t calculate_time_difference(uint32_t current_timestamp, uint32_t last_timestamp);
 
     enum class AS5048A_REGISTERS : uint16_t
     {
@@ -160,13 +149,10 @@ class AS5048A
     };
         
     uint8_t  spiCalcEvenParity(uint16_t value);
-    
+
     private:
 
     uint16_t read_register(uint16_t reg_address);
-
-    //int16_t  get_counts_advanced_past_position();
-
     uint16_t write_register(uint16_t registerAddress, uint16_t data);
 
     uint16_t get_state();
@@ -187,9 +173,6 @@ class AS5048A
     const uint16_t     AS5048_MAX;
     
     SPI_HandleTypeDef* m_hspi;                // SPI handle
-    GPIO_TypeDef*      m_p_chip_select_port;
-    uint16_t           m_chip_select_pin;     //!< SPI chip select pin
-   // uint32_t           m_clock_speed;
     
     uint16_t           m_position_count;
     bool               m_error_detected;
@@ -197,8 +180,6 @@ class AS5048A
     float              m_prev_angle_radians;  // result of last call to getSensorAngle_Radians(), used for full rotations and velocity
     int32_t            m_full_rotations;
     int32_t            m_prev_full_rotations;
-
-    // from sensor
 
     float              m_min_elapsed_time;
     
@@ -210,10 +191,18 @@ class AS5048A
 
     uint32_t           m_prev_microseconds;
     bool               m_invert_output;
-  //  bool               spi_async_read_complete;
 
    //uint8_t            spi_current_index;  // Index to track the circular buffer
-    
+    volatile bool       m_spi_async_read_complete;  // PRP try to disable the cache on this
+   bool                 m_spi_reset_in_progress;
+
+   public:
+
+    // 'used' prevents removal by optimizer
+    static volatile uint16_t  __attribute__(( aligned(32), section(".dma_tx_buffer2"), used)) m_spi_as5048_tx_buff[NUM_TX_READINGS] ;
+    static volatile uint16_t  __attribute__(( aligned(32), section(".dma_rx_buffer2"), used)) m_spi_as5048_rx_buff[NUM_RX_READINGS] ;
+
+
 };
 
 

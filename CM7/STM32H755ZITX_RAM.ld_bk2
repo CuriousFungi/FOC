@@ -31,17 +31,15 @@
 **
 *****************************************************************************
 */
-/* try -ffunction-sections -fdata-sections -Wl,--gc-sections */
+
 /* Entry Point */
 ENTRY(Reset_Handler)
 
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM_D1) + LENGTH(RAM_D1); /* end of "RAM_D1" Ram type memory */
 
-  /* Define heap and stack sizes */
-  _Min_Heap_Size  = 0x400; /* 1 KB heap */
-  _Min_Stack_Size  = 0x800; /* 2 KB stack */
-  
+_Min_Heap_Size = 0x200; /* required amount of heap  */
+_Min_Stack_Size = 0x400; /* required amount of stack */
 
 /* Memories definition */
 MEMORY
@@ -56,12 +54,9 @@ MEMORY
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
 }
 
-  
-  
 /* Sections */
 SECTIONS
 {
-
   /* The startup code into "RAM" Ram type memory */
   .isr_vector :
   {
@@ -70,10 +65,23 @@ SECTIONS
     . = ALIGN(4);
   } >RAM_D1
 
-  /* Declare before .data or other initialized sections */
+/* Declare before .data or other initialized sections */
  /* -Wl,--section-start=.dma_rx_buffer1=0x24060000 */ 
  /* -Wl,--section-start=.dma_rx_buffer2=0x30040000 */
 
+.dma_rx_buffer1 0x24060000 (NOLOAD) :
+{
+	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
+    *(.dma_rx_buffer1)      /* Use the .spi_buffers_32 section in code */
+    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
+} >RAM_D1 AT>RAM_D1
+
+.dma_rx_buffer2 0x30040000 (NOLOAD) :
+{
+	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
+    *(.dma_rx_buffer2)      /* Use the .spi_buffers_32 section in code */
+    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
+}  >RAM_D2 AT>RAM_D2
 
 
   /* The program code and other data into "RAM" Ram type memory */
@@ -83,8 +91,6 @@ SECTIONS
     . = ALIGN(4);
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
-    *(.text .text.*) /* Includes all function-specific text sections */
-    *(.data .data.*) /* Includes all variable-specific data sections */ 
     *(.glue_7)         /* glue arm to thumb code */
     *(.glue_7t)        /* glue thumb to arm code */
     *(.eh_frame)
@@ -107,18 +113,6 @@ SECTIONS
     . = ALIGN(4);
   } >RAM_D1
 
-  .fast_code : { *(.fast_code*) } > ITCMRAM
-  /* to use: __attribute__((section(".fast_code"))) */
-
-  /*
-  learn how to use this
-  OVERLAY
-  {
-    .overlay1 : { *(.overlay1_data) } > RAM_D2
-    .overlay2 : { *(.overlay2_data) } > RAM_D2
-  }
-
-  */
   .ARM.extab (READONLY) : /* The READONLY keyword is only supported in GCC11 and later, remove it if using GCC10 or earlier. */
   {
     . = ALIGN(4);
@@ -180,6 +174,22 @@ SECTIONS
   } >RAM_D1
 
 
+
+  .spi_buffers_2(NOLOAD) :
+  {
+    . = ALIGN(2);
+    *(.spi_buffers_2)
+    . = ALIGN(2);
+  } > RAM_D1 AT> RAM_D1
+
+  .spi_buffers_4(NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.spi_buffers_4)
+    . = ALIGN(4);
+  } > RAM_D1 AT> RAM_D1
+
+
   /* Uninitialized data section into "RAM" Ram type memory */
   . = ALIGN(4);
   .bss :
@@ -197,11 +207,8 @@ SECTIONS
   } >RAM_D1
 
 
-  
-  /* Add ASSERT to ensure we do not exceed D1 memory */
-  /* doesn't work ASSERT(__bss_end__ <= ORIGIN(RAM_D1) + LENGTH(RAM_D1), "D1 Overflow Detected"); */
-
-    ._user_heap_stack :
+  /* User_heap_stack section, used to check that there is enough "RAM" Ram  type memory left */
+  ._user_heap_stack :
   {
     . = ALIGN(8);
     PROVIDE ( end = . );
@@ -210,24 +217,7 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM_D1
-
   
-  
-  .dma_tx_buffer2  (NOLOAD) : /* 0x30040000 */
-  {
-	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
-    *(.dma_tx_buffer2)      /* Use the .spi_buffers_32 section in code */
-    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
-  }  >RAM_D2 AT>RAM_D2
-
-
-  .dma_rx_buffer2  (NOLOAD) : /* 0x30040100 */
-  {
-	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
-    *(.dma_rx_buffer2)      /* Use the .spi_buffers_32 section in code */
-    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
-  }  >RAM_D2 AT>RAM_D2
-
 
 
   /* Remove information from the compiler libraries */

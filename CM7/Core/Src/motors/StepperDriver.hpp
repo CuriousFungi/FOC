@@ -136,7 +136,7 @@ class StepperDriver
         //---------------------------------------------------------------------
         void init()
         {
-            #if 0
+            #if 1
             set_dutycycles( 0.0f,
                             0.0f,
                             0.0f,
@@ -148,9 +148,11 @@ class StepperDriver
         //                          enable
         //---------------------------------------------------------------------
         void enable()
-        {      
+        {   
             init();
-
+            
+ #if 0   
+ // moved to main and this has a TIM5 ref from other board
             char  msg[] = {"enable\r\n"};
             HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(msg), strlen(msg), HAL_MAX_DELAY);
 
@@ -176,57 +178,7 @@ class StepperDriver
                   status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_1);   handle_status(status);
                   status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_2);   handle_status(status);
             }
-
-#if 0
-            
-            
-            if (m_p_htim_phase_1->State == HAL_TIM_STATE_RESET)
-            {
-                status = HAL_TIM_Base_Start(m_p_htim_phase_1);                  handle_status(status);
-                status = HAL_TIM_PWM_Start( m_p_htim_phase_1, TIM_CHANNEL_1);   handle_status(status);
-                status = HAL_TIM_PWM_Start( m_p_htim_phase_1, TIM_CHANNEL_2);   handle_status(status);
-            } else 
-            {
-                // Handle the error or reset the timer
-                
-                char  buff[128];
-                sprintf(buff, "enable:: Timer 1 not in reset. state: %d\r\n", m_p_htim_phase_1->State);
-                HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
-            } 
-               
-            if (m_p_htim_phase_2->State == HAL_TIM_STATE_RESET)
-            {  
-                TIM5->CNT = TIM5->ARR / 4; // delay 90 degrees
-                status = HAL_TIM_Base_Start(m_p_htim_phase_2);                  handle_status(status);
-                status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_1);   handle_status(status);
-                status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_2);   handle_status(status);
-            } else 
-            {
-                // Handle the error or reset the timer
-                
-                char  buff[128];
-                sprintf(buff, "enable:: Timer 5 not in reset. state: %d\r\n", m_p_htim_phase_2->State);
-                HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
-            } 
-#else
-          #if 0
-            __HAL_RCC_TIM5_CLK_ENABLE();
-            
-            status = HAL_TIM_Base_Start(m_p_htim_phase_2);                  handle_status(status);
-            status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_1);   handle_status(status);
-            status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_2);   handle_status(status);
-            
-            TIM1->CNT = TIM1->ARR / 4; // delay 90 degrees
-
-            __HAL_RCC_TIM1_CLK_ENABLE();
-
-            status = HAL_TIM_Base_Start(m_p_htim_phase_1);                  handle_status(status);
-            status = HAL_TIM_PWM_Start( m_p_htim_phase_1, TIM_CHANNEL_1);   handle_status(status);
-            status = HAL_TIM_PWM_Start( m_p_htim_phase_1, TIM_CHANNEL_2);   handle_status(status);
-         #endif
-
-#endif
-
+  #endif          
             
         }
 
@@ -396,12 +348,6 @@ class StepperDriver
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_1);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
-
-
-             //char  buff[128];
-             //sprintf(buff, "eget_ccr_value_phase_1: %ld\r\n", ccr_value);
-             //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);
-            
             
             return ccr_value;
         }
@@ -414,10 +360,6 @@ class StepperDriver
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_2);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
-
-            //char  buff[128];
-            //sprintf(buff, "eget_ccr_value_phase_2: %ld\r\n", ccr_value);
-            //HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(buff), strlen(buff), HAL_MAX_DELAY);            
             
             return ccr_value;
         }
@@ -425,6 +367,7 @@ class StepperDriver
 
         void handle_status( uint32_t status)
         {
+     #if 0       
             // TODO: HAL_StatusTypeDef
             if(HAL_OK == status)
             {
@@ -437,6 +380,7 @@ class StepperDriver
                 sprintf(char_buffer, "Error: %ld\r\n", status);
                 HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(char_buffer), strlen(char_buffer), HAL_MAX_DELAY);
             }
+      #endif      
         }
 
         

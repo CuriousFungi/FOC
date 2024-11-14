@@ -35,14 +35,14 @@
 /* Entry Point */
 ENTRY(Reset_Handler)
 
-/* Highest address of the user mode stack */
-_estack = ORIGIN(RAM_D1) + LENGTH(RAM_D1); /* end of "RAM_D1" Ram type memory */
+
+  /* Highest address of the user mode stack */
+  _estack = ORIGIN(RAM_D1) + LENGTH(RAM_D1); /* end of "RAM_D1" Ram type memory */
 
   /* Define heap and stack sizes */
   _Min_Heap_Size  = 0x400; /* 1 KB heap */
   _Min_Stack_Size  = 0x800; /* 2 KB stack */
   
-
 /* Memories definition */
 MEMORY
 {
@@ -56,8 +56,8 @@ MEMORY
   ITCMRAM (xrw)  : ORIGIN = 0x00000000, LENGTH = 64K
 }
 
-  
-  
+
+
 /* Sections */
 SECTIONS
 {
@@ -201,17 +201,25 @@ SECTIONS
   /* Add ASSERT to ensure we do not exceed D1 memory */
   /* doesn't work ASSERT(__bss_end__ <= ORIGIN(RAM_D1) + LENGTH(RAM_D1), "D1 Overflow Detected"); */
 
-    ._user_heap_stack :
+
+  /* Heap section */
+  .user_heap (NOLOAD) :
   {
     . = ALIGN(8);
-    PROVIDE ( end = . );
-    PROVIDE ( _end = . );
-    . = . + _Min_Heap_Size;
-    . = . + _Min_Stack_Size;
+    _end = .;
+    . += _Min_Heap_Size;
     . = ALIGN(8);
-  } >RAM_D1
-
+  } > RAM_D1
   
+   /* Stack section */
+  .user_stack (NOLOAD) :
+  {
+    . = ALIGN(8);
+    _stack = .;
+    . += _Min_Stack_Size;
+    . = ALIGN(8);
+  } > RAM_D1
+
   
   .dma_tx_buffer2  (NOLOAD) : /* 0x30040000 */
   {

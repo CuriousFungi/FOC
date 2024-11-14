@@ -15,54 +15,25 @@
   *
   ******************************************************************************
   */
-/* USER CODE END Header */
 
-/* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32h7xx_it.h"
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-/* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN TD */
-
-/* USER CODE END TD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/* External variables --------------------------------------------------------*/
 extern DMA_HandleTypeDef hdma_adc1;
 extern DMA_HandleTypeDef hdma_spi2_rx;
 extern DMA_HandleTypeDef hdma_spi2_tx;
-extern SPI_HandleTypeDef hspi2;
+extern DMA_HandleTypeDef hdma_spi4_rx;
+extern DMA_HandleTypeDef hdma_spi4_tx;
+extern SPI_HandleTypeDef hspi4;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim8;
-/* USER CODE BEGIN EV */
+
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void hard_fault_handler_c(unsigned int *hardfault_args) {
+#if 0
     volatile uint32_t stacked_r0 = hardfault_args[0];
     volatile uint32_t stacked_r1 = hardfault_args[1];
     volatile uint32_t stacked_r2 = hardfault_args[2];
@@ -71,7 +42,7 @@ void hard_fault_handler_c(unsigned int *hardfault_args) {
     volatile uint32_t stacked_lr = hardfault_args[5];
     volatile uint32_t stacked_pc = hardfault_args[6];
     volatile uint32_t stacked_psr = hardfault_args[7];
-
+#endif
     __BKPT(0); // Trigger breakpoint for debugging
 
     // Optionally log or display the register values
@@ -79,37 +50,29 @@ void hard_fault_handler_c(unsigned int *hardfault_args) {
 }
 /* USER CODE END EV */
 
-/******************************************************************************/
-/*           Cortex Processor Interruption and Exception Handlers          */
-/******************************************************************************/
-/**
-  * @brief This function handles Non maskable interrupt.
-  */
+//          Cortex Processor Interruption and Exception Handlers          
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void NMI_Handler(void)
 {
-  /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
-  /* USER CODE END NonMaskableInt_IRQn 0 */
-  /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
    while (1)
   {
   }
-  /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
-/**
-  * @brief This function handles Hard fault interrupt.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
 
-  volatile uint32_t hfsr = SCB->HFSR;
-  volatile uint32_t cfsr = SCB->CFSR;
-  volatile uint32_t bfar = SCB->BFAR;  // Bus Fault Address Register, if applicable
-  volatile uint32_t mmfar = SCB->MMFAR;  // Memory Management Fault Address Register
-
-
+  //volatile uint32_t hfsr = SCB->HFSR;
+  //volatile uint32_t cfsr = SCB->CFSR;
+  //volatile uint32_t bfar = SCB->BFAR;  // Bus Fault Address Register, if applicable
+  //volatile uint32_t mmfar = SCB->MMFAR;  // Memory Management Fault Address Register
 
   __asm volatile(
         "TST lr, #4 \n"
@@ -118,110 +81,74 @@ void HardFault_Handler(void)
         "MRSNE r0, PSP \n"
         "B hard_fault_handler_c \n"
     );
-  /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
-    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-    /* USER CODE END W1_HardFault_IRQn 0 */
   }
 }
 
-/**
-  * @brief This function handles Memory management fault.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void MemManage_Handler(void)
 {
-  /* USER CODE BEGIN MemoryManagement_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
-    /* USER CODE BEGIN W1_MemoryManagement_IRQn 0 */
-    /* USER CODE END W1_MemoryManagement_IRQn 0 */
   }
 }
 
-/**
-  * @brief This function handles Pre-fetch fault, memory access fault.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void BusFault_Handler(void)
 {
-  /* USER CODE BEGIN BusFault_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
-    /* USER CODE BEGIN W1_BusFault_IRQn 0 */
-    /* USER CODE END W1_BusFault_IRQn 0 */
   }
 }
 
-/**
-  * @brief This function handles Undefined instruction or illegal state.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void UsageFault_Handler(void)
 {
-  /* USER CODE BEGIN UsageFault_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {
-    /* USER CODE BEGIN W1_UsageFault_IRQn 0 */
-    /* USER CODE END W1_UsageFault_IRQn 0 */
   }
 }
 
-/**
-  * @brief This function handles System service call via SWI instruction.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void SVC_Handler(void)
 {
-  /* USER CODE BEGIN SVCall_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END SVCall_IRQn 0 */
-  /* USER CODE BEGIN SVCall_IRQn 1 */
-
-  /* USER CODE END SVCall_IRQn 1 */
 }
 
-/**
-  * @brief This function handles Debug monitor.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void DebugMon_Handler(void)
 {
-  /* USER CODE BEGIN DebugMonitor_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END DebugMonitor_IRQn 0 */
-  /* USER CODE BEGIN DebugMonitor_IRQn 1 */
-
-  /* USER CODE END DebugMonitor_IRQn 1 */
 }
 
-/**
-  * @brief This function handles Pendable request for system service.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void PendSV_Handler(void)
 {
-  /* USER CODE BEGIN PendSV_IRQn 0 */
 	  __BKPT(0); // Trigger breakpoint for debugging
-  /* USER CODE END PendSV_IRQn 0 */
-  /* USER CODE BEGIN PendSV_IRQn 1 */
-
-  /* USER CODE END PendSV_IRQn 1 */
 }
 
-/**
-  * @brief This function handles System tick timer.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void SysTick_Handler(void)
 {
-  /* USER CODE BEGIN SysTick_IRQn 0 */
-
-  /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
-  /* USER CODE BEGIN SysTick_IRQn 1 */
-
-  /* USER CODE END SysTick_IRQn 1 */
 }
 
 /******************************************************************************/
@@ -231,96 +158,58 @@ void SysTick_Handler(void)
 /* please refer to the startup file (startup_stm32h7xx.s).                    */
 /******************************************************************************/
 
-/**
-  * @brief This function handles DMA1 stream0 global interrupt.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void DMA1_Stream0_IRQHandler(void)
 {
-  /* USER CODE BEGIN DMA1_Stream0_IRQn 0 */
-
-  /* USER CODE END DMA1_Stream0_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_adc1);
-  /* USER CODE BEGIN DMA1_Stream0_IRQn 1 */
-
-  /* USER CODE END DMA1_Stream0_IRQn 1 */
 }
 
-/**
-  * @brief This function handles DMA1 stream1 global interrupt.
-  */
-void DMA1_Stream1_IRQHandler(void)
-{
-  /* USER CODE BEGIN DMA1_Stream1_IRQn 0 */
 
-  /* USER CODE END DMA1_Stream1_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_spi2_rx);
-  /* USER CODE BEGIN DMA1_Stream1_IRQn 1 */
-
-  /* USER CODE END DMA1_Stream1_IRQn 1 */
-}
-
-/**
-  * @brief This function handles DMA1 stream2 global interrupt.
-  */
-void DMA1_Stream2_IRQHandler(void)
-{
-  /* USER CODE BEGIN DMA1_Stream2_IRQn 0 */
-
-  /* USER CODE END DMA1_Stream2_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_spi2_tx);
-  /* USER CODE BEGIN DMA1_Stream2_IRQn 1 */
-
-  /* USER CODE END DMA1_Stream2_IRQn 1 */
-}
-
-/**
-  * @brief This function handles TIM1 update interrupt.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void TIM1_UP_IRQHandler(void)
 {
-  /* USER CODE BEGIN TIM1_UP_IRQn 0 */
-  __enable_irq();  // Re-enable global interrupts to allow nesting
 
-  /* USER CODE END TIM1_UP_IRQn 0 */
+  // Don't do this. the results are unpredicable
+  //__enable_irq();  // Re-enable global interrupts to allow nesting
+
   HAL_TIM_IRQHandler(&htim1);
-  /* USER CODE BEGIN TIM1_UP_IRQn 1 */
-
-  /* USER CODE END TIM1_UP_IRQn 1 */
 }
 
-/**
-  * @brief This function handles SPI2 global interrupt.
-  */
-void SPI2_IRQHandler(void)
-{
-  /* USER CODE BEGIN SPI2_IRQn 0 */
-
-  /* USER CODE END SPI2_IRQn 0 */
-  HAL_SPI_IRQHandler(&hspi2);
-  /* USER CODE BEGIN SPI2_IRQn 1 */
-
-  /* USER CODE END SPI2_IRQn 1 */
-}
-
-/**
-  * @brief This function handles TIM8 update interrupt and TIM13 global interrupt.
-  */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 void TIM8_UP_TIM13_IRQHandler(void)
 {
-  /* USER CODE BEGIN TIM8_UP_TIM13_IRQn 0 */
-   //tmp++;
-  /* USER CODE END TIM8_UP_TIM13_IRQn 0 */
   HAL_TIM_IRQHandler(&htim8);
-  /* USER CODE BEGIN TIM8_UP_TIM13_IRQn 1 */
-
-  /* USER CODE END TIM8_UP_TIM13_IRQn 1 */
 }
 
-/* USER CODE BEGIN 1 */
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void SPI4_IRQHandler(void)
+{
+  HAL_SPI_IRQHandler(&hspi4);
+}
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void DMA1_Stream3_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_spi4_rx);
+}
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void DMA1_Stream4_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_spi4_tx);
+}
 
 
 
-
-
-
-/* USER CODE END 1 */

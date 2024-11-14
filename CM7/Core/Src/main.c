@@ -33,7 +33,37 @@
 #include "stm32h7xx_hal_adc.h"
 
 
-extern void DWT_Init(void);
+
+// Define ITM port 0 register address for printf redirection
+#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
+#define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
+
+enum {
+  TRANSFER_WAIT,
+  TRANSFER_COMPLETE,
+  TRANSFER_ERROR
+};
+
+#define BUFFERSIZE 1
+/* Buffer used for reception */
+#define BUFFER_ALIGNED_SIZE (((BUFFERSIZE+31)/32)*32)
+ALIGN_32BYTES(uint8_t aRxBuffer[BUFFER_ALIGNED_SIZE]);
+
+/* transfer state */
+__IO uint32_t wTransferState = TRANSFER_WAIT;
+
+//#define USE_HAL_SPI_REGISTER_CALLBACKS = 1U;
+
+
+
+extern volatile uint16_t* adc_dma_result;
+
+volatile uint8_t tx_complete_flag = 0;
+volatile uint8_t rx_complete_flag = 0;
+
+
+
+//=========================
 
 
 //#include "stm32h755xx.h"
@@ -45,6 +75,10 @@ extern void DWT_Init(void);
 uint16_t as5048_read_buffer;  // 16-bit buffer for storing the angle data
 float filtered_velocity = 0.0f;  // Store filtered velocity value
 
+extern void DWT_Init(void);
+extern void start_spi_conversion();
+
+HAL_StatusTypeDef Start_ADC_DMA(void);
 
 
 #ifdef __cplusplus
@@ -55,55 +89,54 @@ void cpp_main(void);
 void foc_iteration(void);      
 void wrapper_control_loop_25us(void);
 void wrapper_sample_as5048_25us(void);
-void wrapper_reinit_dma_for_spi(void);
+//void wrapper_reinit_dma_for_spi(void);
 
 
-void RefreshWatchdog(void);
+//void RefreshWatchdog(void);
 void complete_spi_conversion(void);
 
 
 #ifdef __cplusplus
 }
 #endif
+       void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_DAC1_Init(void);
+       void MX_TIM1_Init(void);
+       void MX_TIM8_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_USART2_UART_Init(void);
+//static void MX_SPI2_Init(void);
+static void MX_TIM2_Init(void);
+//static void MX_WWDG1_Init(void);
+static void MX_SPI4_Init(void);
+       void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
 
-/* USER CODE END Includes */
-
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
 
 #ifndef HSEM_ID_0
 #define HSEM_ID_0 (0U) /* HW semaphore 0*/
 #endif
 
-/* USER CODE END PD */
 
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-DMA_HandleTypeDef hdma_dac1;
 uint16_t dac_buffer[100] = {0};
 
-void Fill_DAC_Buffer(uint16_t * pBuff, uint32_t num_items)
-{
-	for(int i = 0; i < num_items; i++)
-		pBuff[i] = 0;
-}
 
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
 DAC_HandleTypeDef hdac1;
+DMA_HandleTypeDef hdma_dac1;
 
-SPI_HandleTypeDef hspi2;
-DMA_HandleTypeDef hdma_spi2_rx;
-DMA_HandleTypeDef hdma_spi2_tx;
+//SPI_HandleTypeDef hspi2;
+//DMA_HandleTypeDef hdma_spi2_rx;
+//DMA_HandleTypeDef hdma_spi2_tx;
+
+SPI_HandleTypeDef hspi4;
+DMA_HandleTypeDef hdma_spi4_rx;
+DMA_HandleTypeDef hdma_spi4_tx;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
@@ -112,39 +145,302 @@ TIM_HandleTypeDef htim8;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
-PCD_HandleTypeDef hpcd_USB_OTG_FS;
+PCD_HandleTypeDef  hpcd_USB_OTG_FS;
 
+
+#if 0
 WWDG_HandleTypeDef hwwdg1;
 
-/* USER CODE BEGIN PV */
+
+#undef ENABLE_WATCHDOG
+//#define ENABLE_WATCHDOG
+#ifdef ENABLE_WATCHDOG
+
+ //-----------------------------------------------------------------------------
+ //                          MX_WWDG1_Init
+ //-----------------------------------------------------------------------------
+static void MX_WWDG1_Init(void)
+{
+
+  /* USER CODE BEGIN WWDG1_Init 0 */
+
+  /* USER CODE END WWDG1_Init 0 */
+
+  /* USER CODE BEGIN WWDG1_Init 1 */
+
+  /* USER CODE END WWDG1_Init 1 */
+  hwwdg1.Instance = WWDG1;
+  hwwdg1.Init.Prescaler = WWDG_PRESCALER_1;
+  hwwdg1.Init.Window = 0x10;
+  hwwdg1.Init.Counter = 0x7F;
+  hwwdg1.Init.EWIMode = WWDG_EWI_ENABLE;
+  if (HAL_WWDG_Init(&hwwdg1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN WWDG1_Init 2 */
+
+  /* USER CODE END WWDG1_Init 2 */
+
+}
+
+//-----------------------------------------------------------------------------
+//                          RefreshWatchdog
+//-----------------------------------------------------------------------------
+void RefreshWatchdog(void)
+/**
+  * Enable DMA controller clock
+  */
+{
+    HAL_WWDG_Refresh(&hwwdg1);
+}
+#else
+
+//-----------------------------------------------------------------------------
+//                          DisableWatchdogs
+//-----------------------------------------------------------------------------
+void DisableWatchdogs(void) 
+{
+   // Unlock access to IWDG_PR and IWDG_RLR registers
+   IWDG1->KR = 0x00005555;
+   IWDG2->KR = 0x00005555;
+   
+   // DMA controller clock enable
+    __HAL_RCC_WWDG_CLK_DISABLE();
+
+    
+  // Set IWDG reload register to minimum to effectively disable it
+  IWDG1->RLR = 0x0000;
+
+  // Set prescaler to the highest value to reduce timeout frequency
+  //IWDG1->PR = IWDG_PRESCALER_256;
+
+#if 0
+   IWDG1->KR = 0x0000;  // Prevents the IWDG from starting
+
+    if ((WWDG1->CR & WWDG_CR_WDGA) != 0) {
+        __HAL_RCC_WWDG_CLK_DISABLE();  // Disable clock to WWDG as an extreme measure
+    }
+#endif
+}
+
+//-----------------------------------------------------------------------------
+//                          MX_WWDG1_Init
+//-----------------------------------------------------------------------------
+static void MX_WWDG1_Init(void)
+{
+    DisableWatchdogs();
+}
+
+//-----------------------------------------------------------------------------
+//                          RefreshWatchdog
+//-----------------------------------------------------------------------------
+void RefreshWatchdog(void)
+{
+    return;
+}
+#endif
 
 
+void WWDG_RST_IRQHandler(void)
+{
+    RefreshWatchdog();
+
+    __BKPT();
+}
+#endif
+
+//-----------------------------------------------------------------------------
+//                              MPU_Config
+//-----------------------------------------------------------------------------
+static void MPU_Config(void)
+{
+    MPU_Region_InitTypeDef MPU_InitStruct;
+    const uint32_t RAM_D1_BASE = 0x24000000U;
+    const uint32_t RAM_D2_BASE = 0x30000000U;
+    //const uint32_t RAM_D3_BASE = 0x38000000U;
+    const uint32_t OFFSET_256K = 0x00040000U;
+    //const uint32_t OFFSET_128K = 0x00020000U;
+
+    /* Disable the MPU */
+    HAL_MPU_Disable();
+
+    // Region 0
+    // Configure Flash memory region (read-only, cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER0; // Start from lowest
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x08000000; // Start of Flash memory
+    MPU_InitStruct.Size = MPU_REGION_SIZE_1MB; // Flash memory size
+    MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO_URO; // Read-only
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Enable caching
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+    MPU_InitStruct.SubRegionDisable = 0x00;
+    MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+
+    // Region 1  D1 lower 256
+    // Configure remaining RAM_D1 region (read/write, cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER1; 
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = RAM_D1_BASE;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;  //256KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Cacheable for general use
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+#if 0
+    // Region 2  D1 Middle 128
+    // Configure remaining RAM_D1 region (read/write, cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER2; 
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = RAM_D1_BASE + OFFSET_256K;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_128KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Cacheable for general use
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    // Region 3  D1 upper 128
+    // Configure RAM_D2 for DMA operations
+    MPU_InitStruct.Number = MPU_REGION_NUMBER3; // Sequential number
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = RAM_D1_BASE + OFFSET_256K + OFFSET_128K;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_128KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE; // Strongly ordered for DMA
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE; // DMA-compatible
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    MPU_InitStruct.SubRegionDisable = 0x00;
+    //MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+#endif
+    // Region 2  DTCMRAM
+    // Configure DTCMRAM region (read/write, non-cacheable) 
+    MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x20000000; // Start of DTCMRAM
+    MPU_InitStruct.Size = MPU_REGION_SIZE_128KB; // Size of DTCMRAM
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE; // Bufferable
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Non-cacheable
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE; // DMA-compatible
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+
+    // Region 3  D2 lower 256K
+    // Configure remaining RAM_D1 region (read/write, cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER3; 
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = RAM_D2_BASE;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    // Region 4  D2 upper 32K for DMA operations
+    // Configure remaining RAM_D2 region
+    MPU_InitStruct.Number = MPU_REGION_NUMBER4; 
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = RAM_D2_BASE + OFFSET_256K;
+    MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE; // Cacheable for general use
+    MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE; // Private access
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    // Region 5 RAM_D3
+    // Configure RAM_D3 region (read/write, cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER5;
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x38000000; // Start of RAM_D3
+    MPU_InitStruct.Size = MPU_REGION_SIZE_64KB; // Size of RAM_D3
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Cacheable
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    // Region 6  ITCMRAM 
+    // Configure ITCMRAM region (read/write, non-cacheable)
+    MPU_InitStruct.Number = MPU_REGION_NUMBER6; // Next sequential number
+    MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+    MPU_InitStruct.BaseAddress = 0x00000000; // Start of ITCMRAM
+    MPU_InitStruct.Size = MPU_REGION_SIZE_64KB; // Size of ITCMRAM
+    MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+    MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+    MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE; // Non-cacheable
+    MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+    /* Enable the MPU with default settings */
+    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT); //MPU_PRIVILEGED_DEFAULT); MPU_HFNMI_PRIVDEF
+}
+
+//-----------------------------------------------------------------------------
+//                              MPU_Config
+//-----------------------------------------------------------------------------
+static void CPU_CACHE_Enable(void)
+{
+  /* Enable I-Cache */
+  SCB_EnableICache();
+
+  /* Enable D-Cache */
+  SCB_EnableDCache();
+}
+
+
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
 int __io_putchar(int ch)
 {
   HAL_UART_Transmit(&huart2, (uint8_t*)&ch, 1, HAL_MAX_DELAY);
   return ch;
 }
 
-
-void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+void Fill_DAC_Buffer(uint16_t * pBuff, uint32_t num_items)
 {
-    if (hspi == &hspi2)
-    {
-    	complete_spi_conversion();
-    }
+	for(int i = 0; i < num_items; i++)
+		pBuff[i] = 0;
 }
 
-// If the duty cycle is 0, HAL_TIM_PWM_PulseFinishedCallback might not be invoked.
-// Hybrid approach is to use both
+//-----------------------------------------------------------------------------
+//                       HAL_TIM_PWM_PulseFinishedCallback
+//
+// If the duty cycle is 0, HAL_TIM_PWM_PulseFinishedCallback might not be 
+// invoked.Hybrid approach is to use both
+//-----------------------------------------------------------------------------
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
-    
-    if(htim->Instance == TIM1 || htim->Instance == TIM8)
+    if(htim->Instance == TIM1 ) //|| htim->Instance == TIM8)
     {
         wrapper_sample_as5048_25us();
     }
 }
 
+//-----------------------------------------------------------------------------
+//                    HAL_TIM_PeriodElapsedCallback
+//-----------------------------------------------------------------------------
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     
@@ -159,38 +455,186 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+//-----------------------------------------------------------------------------
+//                       HAL_SPI_TxRxCpltCallback
+//
+// SPI_DMATransmitReceiveCplt--> HAL_SPI_TxRxCpltCallback
+//-----------------------------------------------------------------------------
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi == &hspi2)
+    if (hspi == &hspi4)
     {
-        
-        //__HAL_TIM_DISABLE(&htim1);
-        //__HAL_TIM_DISABLE(&htim8);
- //       wrapper_reinit_dma_for_spi();
-        //__HAL_TIM_ENABLE(&htim8);
-        //__HAL_TIM_ENABLE(&htim1);
+    	complete_spi_conversion();
+        hspi4.State = HAL_SPI_STATE_READY;
     }
 }
 
+//-----------------------------------------------------------------------------
+//                        HAL_SPI_TxCpltCallback
+//-----------------------------------------------------------------------------
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI4) 
+    {
+        // Clear the HAL busy state for TX
+        hspi->State = HAL_SPI_STATE_READY;
 
-/* USER CODE END PV */
+        // Clear specific SPI flags if needed
+        __HAL_SPI_CLEAR_OVRFLAG(hspi);  // Clear overrun
+        __HAL_SPI_CLEAR_FREFLAG(hspi);  // Clear framing errors if any
+        // Custom logic, e.g., setting a flag to indicate transmission complete
+        tx_complete_flag = 1;
+    }
+}
 
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
-static void MX_ADC1_Init(void);
-static void MX_DAC1_Init(void);
- void MX_TIM1_Init(void);
- void MX_TIM8_Init(void);
-static void MX_USART3_UART_Init(void);
-static void MX_USB_OTG_FS_PCD_Init(void);
-static void MX_USART2_UART_Init(void);
-static void MX_SPI2_Init(void);
-static void MX_TIM2_Init(void);
-static void MX_WWDG1_Init(void);
-/* USER CODE BEGIN PFP */
-void enable_swo(void) {
+//-----------------------------------------------------------------------------
+//                     HAL_SPI_RxCpltCallback
+//-----------------------------------------------------------------------------
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI4) 
+    { 
+        // Clear the HAL busy state for RX
+        hspi->State = HAL_SPI_STATE_READY;
+
+        // Clear specific SPI flags if needed
+        __HAL_SPI_CLEAR_OVRFLAG(hspi);  // Clear overrun
+        __HAL_SPI_CLEAR_FREFLAG(hspi);  // Clear framing errors if any
+        // Custom logic, e.g., setting a flag to indicate reception complete
+        rx_complete_flag = 1;
+        set_async_read_complete();
+    }
+}
+
+//-----------------------------------------------------------------------------
+//                          HAL_SPI_ErrorCallback
+//-----------------------------------------------------------------------------
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi) 
+{
+    if (hspi == &hspi4)
+    {
+        //static uint32_t last_overrun_data   = 0;
+        //static uint32_t last_overrun_status = 0;
+
+        uint32_t sr_status       = hspi->Instance->SR;        
+        uint32_t dma_lisr_status = DMA1->LISR;
+
+           // Check for EOT (Bit 15)
+           if (sr_status & SPI_SR_EOT) {
+               // Clear EOT flag
+               __HAL_SPI_CLEAR_EOTFLAG(hspi);
+           }
+
+           // Check for DXP (Bit 13)
+           if (sr_status & SPI_SR_DXP) {
+               // Data exchange was in progress
+           }
+
+           // Check for RXP (Bit 1)
+           if (sr_status & SPI_SR_RXP) {
+               // Data is available in the RX buffer
+           }
+
+           // Check for TXP (Bit 0)
+           if (sr_status & SPI_SR_TXP) {
+               // TX buffer is empty
+           }
+#if 0
+           // Check for DMA errors for SPI2 RX (DMA1 Stream 1)
+             // 1. Transfer Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmarx, DMA_FLAG_TEIF1_5)) {
+                 // Handle transfer error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmarx, DMA_FLAG_TEIF1_5);  // Clear the flag
+             }
+
+             // 2. Direct Mode Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmarx, DMA_FLAG_DMEIF1_5)) {
+                 // Handle direct mode error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmarx, DMA_FLAG_DMEIF1_5);  // Clear the flag
+             }
+
+             // 3. FIFO Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmarx, DMA_FLAG_FEIF1_5)) {
+                 // Handle FIFO error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmarx, DMA_FLAG_FEIF1_5);  // Clear the flag
+             }
+
+             // Check for DMA errors for SPI2 TX (DMA1 Stream 2)
+             // 1. Transfer Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmatx, DMA_FLAG_TEIF2_6)) {
+                 // Handle transfer error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmatx, DMA_FLAG_TEIF2_6);  // Clear the flag
+             }
+
+             // 2. Direct Mode Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmatx, DMA_FLAG_DMEIF2_6)) {
+                 // Handle direct mode error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmatx, DMA_FLAG_DMEIF2_6);  // Clear the flag
+             }
+
+             // 3. FIFO Error
+             if (__HAL_DMA_GET_FLAG(hspi->hdmatx, DMA_FLAG_FEIF2_6)) {
+                 // Handle FIFO error
+                 __HAL_DMA_CLEAR_FLAG(hspi->hdmatx, DMA_FLAG_FEIF2_6);  // Clear the flag
+             }
+
+#endif
+
+        // Stop ongoing DMA transfers
+        HAL_DMA_Abort(hspi->hdmarx);
+        HAL_DMA_Abort(hspi->hdmatx);
+
+        // Reset the SPI peripheral
+        __HAL_SPI_DISABLE(hspi);
+        __HAL_SPI_ENABLE(hspi);
+
+
+        // Reinitialize SPI DMA transfer for AS5048A read
+   //     start_spi_conversion();
+
+        // Set error and communication flags
+        //spi_error_detected      = true;
+
+
+        // Optional: Restart timer triggering the AS5048A read
+       // __HAL_TIM_SET_COUNTER(&htim1, 0);
+    }
+}
+
+//-----------------------------------------------------------------------------
+//                        HAL_DMA_ErrorCallback
+//-----------------------------------------------------------------------------
+void HAL_DMA_ErrorCallback(DMA_HandleTypeDef *hdma)
+{
+    if(__HAL_DMA_GET_FLAG(hdma, DMA_FLAG_TEIF1_5))
+    {
+        // Handle Transfer Error
+        // Reset buffer or notify error
+        __BKPT(0);
+    }
+
+    if(__HAL_DMA_GET_FLAG(hdma, DMA_FLAG_FEIF1_5))
+    {
+        // Handle FIFO Error
+        __BKPT(0);
+    }
+
+    if(__HAL_DMA_GET_FLAG(hdma, DMA_FLAG_DMEIF1_5))
+    {
+        // Handle Direct Mode Error
+        __BKPT(0);
+    }    
+}
+
+
+
+
+//-----------------------------------------------------------------------------
+//                             enable_swo
+//-----------------------------------------------------------------------------
+void enable_swo(void) 
+{
     // Enable trace and debug blocks in CoreDebug
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
 
@@ -214,53 +658,19 @@ void enable_swo(void) {
 }
 
 
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-static void MX_DMA_Init(void) ;
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, IRQ_PRIORITY_ADC, 0);     // ADC
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-  /* DMA1_Stream1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, IRQ_PRIORITY_DMA_SPI_RX, 0);    // SPI Rx
-  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
-  /* DMA1_Stream2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, IRQ_PRIORITY_DMA_SPI_TX, 0);    // SPI Tx
-  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
-
-  
-    __HAL_DMA_ENABLE_IT(&hdma_spi2_rx, DMA_IT_TE);  // Enable DMA transfer error interrupt
-    __HAL_DMA_ENABLE_IT(&hdma_spi2_rx, DMA_IT_TC);
-
-}
 
 
-
-HAL_StatusTypeDef Start_ADC_DMA(void);
-extern volatile uint16_t* adc_dma_result;
-
+//-----------------------------------------------------------------------------
+//                            Start_ADC_DMA
+//-----------------------------------------------------------------------------
 HAL_StatusTypeDef Start_ADC_DMA(void) 
 {
     return HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_dma_result, ADC_BUFFER_SIZE);
 }
 
-
-
-
-
-// Define ITM port 0 register address for printf redirection
-#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
-#define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
-
+//-----------------------------------------------------------------------------
+//                            Start_ADC_DMA
+//-----------------------------------------------------------------------------
 int _write(int file, char *ptr, int len) {
     for (int i = 0; i < len; i++) {
         // Wait until ITM is enabled
@@ -273,10 +683,11 @@ int _write(int file, char *ptr, int len) {
     return len;
 }
 
-
-
-
-void ITM_Init(void) {
+//-----------------------------------------------------------------------------
+//                            ITM_Init
+//-----------------------------------------------------------------------------
+void ITM_Init(void) 
+{
     // Preserve other bits in DEMCR and enable only the TRCENA bit
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Set TRCENA, preserving other bits
 
@@ -292,224 +703,20 @@ void ITM_Init(void) {
 
 
 
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
-void   SystemClock_Config();
-int main(void)
-{
-    HAL_Init();
-    SystemClock_Config();
-    #if 0
-    MPU->CTRL &= ~MPU_CTRL_ENABLE_Msk;  // Disable the MPU
-    SCB_CleanInvalidateDCache();
-    SCB_DisableDCache();
-    #endif
-
-  /* USER CODE BEGIN 1 */
-
-	ITM_Init();
-
-
-  /* USER CODE END 1 */
-/* USER CODE BEGIN Boot_Mode_Sequence_0 */
-  uint32_t timeout = 0xFFFF;
-/* USER CODE END Boot_Mode_Sequence_0 */
-
-/* USER CODE BEGIN Boot_Mode_Sequence_1 */
-
-#if 0
-  /* Wait until CPU2 boots and enters in stop mode or timeout*/
-  timeout = 0xFFFF;
-  while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
-  if ( timeout < 0 )
-  {
-  Error_Handler();
-  }
-#endif
-
-/* USER CODE END Boot_Mode_Sequence_1 */
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-/* USER CODE BEGIN Boot_Mode_Sequence_2 */
-/* When system initialization is finished, Cortex-M7 will release Cortex-M4 by means of
-HSEM notification */
-
-  // Call DWT_Init after system clock is set
-  DWT_Init();
-
-
-
-  //==============================================
-  // Enable Cortex-M4 Boot
-  //__HAL_RCC_D2CKEN_CLK_ENABLE();
-
-  // Boot CPU2 (Cortex-M4) and set it to STOP mode
-  HAL_RCCEx_EnableBootCore(RCC_BOOT_C2);
-
-  // Wait for the CPU2 (Cortex-M4) to enter stop mode
-   timeout = 0xFFFF;
-   while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
-
-   if (timeout < 0)
-   {
-       Error_Handler();
-   }
-//===================================================
-
-/*HW semaphore Clock enable*/
-__HAL_RCC_HSEM_CLK_ENABLE();
-/*Take HSEM */
-HAL_HSEM_FastTake(HSEM_ID_0);
-/*Release HSEM in order to notify the CPU2(CM4)*/
-HAL_HSEM_Release(HSEM_ID_0,0);
-/* wait until CPU2 wakes up from stop mode */
-timeout = 0xFFFF;
-while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
-if ( timeout < 0 )
-{
-Error_Handler();
-}
-/* USER CODE END Boot_Mode_Sequence_2 */
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_ADC1_Init();
-  MX_DAC1_Init();
-
-  HAL_StatusTypeDef status;
-  status = HAL_ADC_RegisterCallback(&hadc1,  HAL_ADC_CONVERSION_COMPLETE_CB_ID, HAL_ADC_ConvCpltCallback);
-  if (status != HAL_OK)
-  {
-      Error_Handler();
-  }
-  MX_USART3_UART_Init();
-  MX_USB_OTG_FS_PCD_Init();
-  MX_USART2_UART_Init();
-  MX_TIM2_Init();
-  MX_WWDG1_Init();
-  /* USER CODE BEGIN 2 */
-
-  // Enable the cycle counter
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable DWT
-  DWT->CYCCNT = 0;                                // Reset the cycle counter
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Enable the cycle counter
-
-
-  MX_TIM1_Init();
-  MX_TIM8_Init();
-  TIM1->DIER |= TIM_DIER_UIE; 
-  
-  MX_SPI2_Init();
-
-#if 0
-  if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET) 
-  {
-      status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_TX_RX_COMPLETE_CB_ID, SPI_TxRx_completion_callback);
-      if(HAL_OK != status) { Error_Handler(); }
-  }
-#endif
-
-  status = HAL_TIM_Base_Start_IT(&htim1);
-  if(HAL_OK != status) { Error_Handler(); }
-
-  status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_1);
-  if(HAL_OK != status) { Error_Handler(); }
-
-  status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  if(HAL_OK != status) { Error_Handler(); }
-
-  // Introduce a 90-degree phase shift for TIM1
-  TIM8->CNT = TIM8->ARR / 4;
-
-
-  status =  HAL_TIM_Base_Start_IT(&htim8) ;
-  if (status != HAL_OK) { Error_Handler();}
-
-  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-  if(HAL_OK != status) { Error_Handler(); }
-
-  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-  if(HAL_OK != status) { Error_Handler(); }
-
-  status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
-  if(HAL_OK != status) { Error_Handler(); }
-
-
-  //status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_RX_COMPLETE_CB_ID, HAL_SPI_RxCpltCallback);
-  //if(HAL_OK != status) { Error_Handler(); }
-
-
-  TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
-
-
-  enable_swo();
-
-  printf("Hello, USART2!\r\n");
-
-  // Start DAC with DMA
- // if (Start_ADC_DMA() != HAL_OK) // Ensure Start_ADC_DMA() returns a status
- //  {
- //      Error_Handler();  // Handle any DMA errors specifically
- //  }
-
-
-  //__enable_irq();
-  cpp_main();
-
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-
-      // Nothing to do here; everything is handled in interrupts
-       __WFI();  // Wait for interrupt (low power)
-    
-  }
-  /* USER CODE END 3 */
-}
-
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          SystemClock_Config
+//-----------------------------------------------------------------------------
 void SystemClock_Config(void)
 {
-  extern uint32_t SystemCoreClock;
-  SystemCoreClock = 400000000;  // 400 MHz for STM32H7
+  //extern uint32_t SystemCoreClock;
+  //SystemCoreClock = 400000000;  // 400 MHz for STM32H7 let HAL_RCC_ClockConfig  set it
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Supply configuration update enable
   */
   HAL_PWREx_ConfigSupply(PWR_DIRECT_SMPS_SUPPLY);
-
-  /** Configure the main internal regulator output voltage
-  */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
 
   /** Initializes the RCC Oscillators according to the specified parameters
@@ -545,18 +752,97 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  // FLASH_LATENCY_2
+  HAL_StatusTypeDef status = HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7); 
+  if (status != HAL_OK)
   {
     Error_Handler();
   }
+  SystemCoreClockUpdate(); 
   HAL_RCC_MCOConfig(RCC_MCO2, RCC_MCO2SOURCE_SYSCLK, RCC_MCODIV_1);
 }
 
-/**
-  * @brief ADC1 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_GPIO_Init
+//-----------------------------------------------------------------------------
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+#if 0
+// For Timer 1, Channel 1 (PE9) and Channel 2 (PE11)
+GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_11;
+GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+GPIO_InitStruct.Pull = GPIO_NOPULL;
+GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+// For Timer 8, Channel 1 (PC6) and Channel 3 (PC8)
+GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_8;
+GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+GPIO_InitStruct.Pull = GPIO_NOPULL;
+GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+GPIO_InitStruct.Alternate = GPIO_AF3_TIM8;
+HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+#endif
+
+
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+
+
+ // HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : PC1 PC4 PC5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PA1 PA2 PA7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SPI2_CS_Pin */
+  //GPIO_InitStruct.Pin = SPI2_CS_Pin;
+  //GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  //GPIO_InitStruct.Pull = GPIO_NOPULL;
+  //GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  //HAL_GPIO_Init(SPI2_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PG11 PG13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+}
+
+
+//-----------------------------------------------------------------------------
+//                          MX_ADC1_Init
+//-----------------------------------------------------------------------------
 static void MX_ADC1_Init(void)
 {
     // Changes
@@ -605,11 +891,9 @@ static void MX_ADC1_Init(void)
 
 
 
-/**
-  * @brief DAC1 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_DAC1_Init
+//-----------------------------------------------------------------------------
 static void MX_DAC1_Init(void)
 {
 
@@ -652,23 +936,41 @@ static void MX_DAC1_Init(void)
 
 }
 
-/**
-  * @brief SPI2 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                             MX_DMA_Init
+//-----------------------------------------------------------------------------
+static void MX_DMA_Init(void)
+{
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 
+                       IRQ_PRIORITY_ADC, 0);
+  HAL_NVIC_EnableIRQ(  DMA1_Stream0_IRQn);
+  
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 
+                       IRQ_PRIORITY_DMA_SPI_RX, 0);
+  HAL_NVIC_EnableIRQ(  DMA1_Stream3_IRQn);
+   
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 
+                       IRQ_PRIORITY_DMA_SPI_TX, 0);
+  HAL_NVIC_EnableIRQ(  DMA1_Stream4_IRQn);
+
+
+  __HAL_DMA_STREAM_ENABLE_IT(&hdma_spi4_rx, DMA_IT_TE | DMA_IT_FE | DMA_IT_DME | DMA_IT_TC);
+  __HAL_DMA_STREAM_ENABLE_IT(&hdma_spi4_tx, DMA_IT_TE | DMA_IT_FE | DMA_IT_DME | DMA_IT_TC);
+
+ // HAL_NVIC_SetPriority(SPI4_IRQn, IRQ_PRIORITY_SPI, 0);
+ // HAL_NVIC_EnableIRQ(SPI4_IRQn);
+  
+}
+#if 0
+//-----------------------------------------------------------------------------
+//                          MX_SPI2_Init
+//-----------------------------------------------------------------------------
 static void MX_SPI2_Init(void)
 {
-
-  /* USER CODE BEGIN SPI2_Init 0 */
-  HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_SET);
+  //HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_SET);
   
-  /* USER CODE END SPI2_Init 0 */
-
-  /* USER CODE BEGIN SPI2_Init 1 */
-
-  /* USER CODE END SPI2_Init 1 */
-  /* SPI2 parameter configuration*/
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
@@ -676,12 +978,12 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi2.Init.CRCPolynomial = 0x0;
-  hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   hspi2.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
   hspi2.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
   hspi2.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
@@ -689,44 +991,95 @@ static void MX_SPI2_Init(void)
   hspi2.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi2.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
   hspi2.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
-  hspi2.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
+  hspi2.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;
   hspi2.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   if (HAL_SPI_Init(&hspi2) != HAL_OK)
   {
     Error_Handler();
   }
 
-  /* USER CODE BEGIN SPI2_Init 2 */
-  // see stm32h7xx_hal_msp.c
-  __HAL_LINKDMA(&hspi2, hdmarx, hdma_spi2_rx);  // Link RX DMA
-  __HAL_LINKDMA(&hspi2, hdmatx, hdma_spi2_tx);  // Link TX DMA
+  hspi2.Instance->CR2 = (1 << SPI_CR2_TSIZE_Pos);
+  SET_BIT(hspi2.Instance->CFG1, SPI_CFG1_RXDMAEN | SPI_CFG1_TXDMAEN);
 
-  /* USER CODE END SPI2_Init 2 */
+  __HAL_SPI_ENABLE_IT(&hspi2,  SPI_IT_ERR);
 
 }
+#endif
 
-/**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_SPI4_Init
+//-----------------------------------------------------------------------------
+static void MX_SPI4_Init(void)
+{
+  hspi4.Instance = SPI4;
+  hspi4.Init.Mode = SPI_MODE_MASTER;
+  hspi4.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi4.Init.DataSize = SPI_DATASIZE_16BIT;
+  hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi4.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi4.Init.CRCPolynomial = 0x0;
+  hspi4.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  hspi4.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+  hspi4.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+  hspi4.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi4.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi4.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+  hspi4.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+  hspi4.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi4.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;
+  hspi4.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+
+#if 0
+  void (*RxISR)(struct __SPI_HandleTypeDef *hspi);         /*!< function pointer on Rx ISR               */
+  void (*TxISR)(struct __SPI_HandleTypeDef *hspi);         /*!< function pointer on Tx ISR               */
+  void (* TxCpltCallback)(struct __SPI_HandleTypeDef *hspi);       /*!< SPI Tx Completed callback          */
+  void (* RxCpltCallback)(struct __SPI_HandleTypeDef *hspi);       /*!< SPI Rx Completed callback          */
+  void (* TxRxCpltCallback)(struct __SPI_HandleTypeDef *hspi);     /*!< SPI TxRx Completed callback        */
+  void (* TxHalfCpltCallback)(struct __SPI_HandleTypeDef *hspi);   /*!< SPI Tx Half Completed callback     */
+  void (* RxHalfCpltCallback)(struct __SPI_HandleTypeDef *hspi);   /*!< SPI Rx Half Completed callback     */
+  void (* TxRxHalfCpltCallback)(struct __SPI_HandleTypeDef *hspi); /*!< SPI TxRx Half Completed callback   */
+  void (* ErrorCallback)(struct __SPI_HandleTypeDef *hspi);        /*!< SPI Error callback                 */
+  void (* AbortCpltCallback)(struct __SPI_HandleTypeDef *hspi);    /*!< SPI Abort callback                 */
+  void (* SuspendCallback)(struct __SPI_HandleTypeDef *hspi);      /*!< SPI Suspend callback               */
+  void (* MspInitCallback)(struct __SPI_HandleTypeDef *hspi);      /*!< SPI Msp Init callback              */
+  void (* MspDeInitCallback)(struct __SPI_HandleTypeDef *hspi);    /*!< SPI Msp DeInit callback            */
+#endif
+
+
+   hspi4.ErrorCallback = HAL_SPI_ErrorCallback;
+
+
+  
+  if (HAL_SPI_Init(&hspi4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  hspi4.Instance->CR2 = (1 << SPI_CR2_TSIZE_Pos);
+  SET_BIT(hspi4.Instance->CFG1, SPI_CFG1_RXDMAEN | SPI_CFG1_TXDMAEN);
+  
+  __HAL_SPI_ENABLE_IT(&hspi4,  SPI_IT_ERR);
+}
+
+ //-----------------------------------------------------------------------------
+ //                          MX_TIM1_Init
+ //-----------------------------------------------------------------------------
  void MX_TIM1_Init(void)
 {
-
-  /* USER CODE BEGIN TIM1_Init 0 */
   __HAL_RCC_TIM1_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
-  /* USER CODE END TIM1_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
-  /* USER CODE BEGIN TIM1_Init 1 */
-
-  /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 1-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -738,11 +1091,13 @@ static void MX_SPI2_Init(void)
   {
     Error_Handler();
   }
+  
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -754,6 +1109,7 @@ static void MX_SPI2_Init(void)
   {
     Error_Handler();
   }
+  
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
@@ -794,11 +1150,9 @@ static void MX_SPI2_Init(void)
 
 }
 
-/**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_TIM2_Init
+//-----------------------------------------------------------------------------
 static void MX_TIM2_Init(void)
 {
 
@@ -866,11 +1220,9 @@ static void MX_TIM2_Init(void)
 
 }
 
-/**
-  * @brief TIM8 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_TIM8_Init
+//-----------------------------------------------------------------------------
  void MX_TIM8_Init(void)
 {
 
@@ -987,13 +1339,12 @@ static void MX_TIM2_Init(void)
 
 }
 
-/**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_USART2_UART_Init
+//-----------------------------------------------------------------------------
 static void MX_USART2_UART_Init(void)
 {
+ // RefreshWatchdog();
 
   /* USER CODE BEGIN USART2_Init 0 */
 
@@ -1035,13 +1386,12 @@ static void MX_USART2_UART_Init(void)
 
 }
 
-/**
-  * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_USART3_UART_Init
+//-----------------------------------------------------------------------------
 static void MX_USART3_UART_Init(void)
 {
+ // RefreshWatchdog();
 
   /* USER CODE BEGIN USART3_Init 0 */
 
@@ -1083,11 +1433,9 @@ static void MX_USART3_UART_Init(void)
 
 }
 
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          MX_USB_OTG_FS_PCD_Init
+//-----------------------------------------------------------------------------
 static void MX_USB_OTG_FS_PCD_Init(void)
 {
 
@@ -1119,153 +1467,12 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 
 }
 
-#undef ENABLE_WATCHDOG
-#ifdef ENABLE_WATCHDOG
-  //* @param None
-  //* @retval None  */
-static void MX_WWDG1_Init(void)
-{
-
-  /* USER CODE BEGIN WWDG1_Init 0 */
-
-  /* USER CODE END WWDG1_Init 0 */
-
-  /* USER CODE BEGIN WWDG1_Init 1 */
-
-  /* USER CODE END WWDG1_Init 1 */
-  hwwdg1.Instance = WWDG1;
-  hwwdg1.Init.Prescaler = WWDG_PRESCALER_1;
-  hwwdg1.Init.Window = 64;
-  hwwdg1.Init.Counter = 64;
-  hwwdg1.Init.EWIMode = WWDG_EWI_DISABLE;
-  if (HAL_WWDG_Init(&hwwdg1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN WWDG1_Init 2 */
-
-  /* USER CODE END WWDG1_Init 2 */
-
-}
-void RefreshWatchdog(void)
-/**
-  * Enable DMA controller clock
-  */
-{
-    HAL_WWDG_Refresh(&hwwdg1);
-}
-#else
-void DisableWatchdogs(void) {
-  /* DMA controller clock enable */
-    __HAL_RCC_WWDG_CLK_DISABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-    IWDG1->KR = 0x0000;  // Prevents the IWDG from starting
 
 
-    if ((WWDG1->CR & WWDG_CR_WDGA) != 0) {
-        __HAL_RCC_WWDG_CLK_DISABLE();  // Disable clock to WWDG as an extreme measure
-    }
-}
-static void MX_WWDG1_Init(void){DisableWatchdogs();}
-void RefreshWatchdog(void){return;}
-#endif
 
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-
-
-#if 0
-// For Timer 1, Channel 1 (PE9) and Channel 2 (PE11)
-GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_11;
-GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-GPIO_InitStruct.Pull = GPIO_NOPULL;
-GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-// For Timer 8, Channel 1 (PC6) and Channel 3 (PC8)
-GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_8;
-GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-GPIO_InitStruct.Pull = GPIO_NOPULL;
-GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-GPIO_InitStruct.Alternate = GPIO_AF3_TIM8;
-HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-#endif
-
-/* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : PC1 PC4 PC5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PA1 PA2 PA7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : SPI2_CS_Pin */
-  GPIO_InitStruct.Pin = SPI2_CS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SPI2_CS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PG11 PG13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
-  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
-}
-
-/* USER CODE BEGIN 4 */
-
-/* USER CODE END 4 */
-
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+//-----------------------------------------------------------------------------
+//                          Error_Handler
+//-----------------------------------------------------------------------------
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -1280,19 +1487,313 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
+
+//-----------------------------------------------------------------------------
+//                          Error_Handler
+//
+//  @brief  Reports the name of the source file and the source line number
+//        where the assert_param error has occurred.
+// @param  file: pointer to the source file name
+// @param  line: assert_param error line source number
+// @retval None
+//
+//-----------------------------------------------------------------------------
 #ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+   //  ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
-#endif /* USE_FULL_ASSERT */
+#endif // USE_FULL_ASSERT 
+
+
+
+extern uint32_t _stack_start;   // Start of stack (defined in linker script)
+extern uint32_t _end;  // End of stack (defined in linker script)
+
+#if 0
+void Stack_Init(void) {
+    uint32_t *ptr = &_stack_start;
+    while (ptr < &_end) {
+        *ptr++ = 0xDEADBEEF;
+    }
+}
+#endif
+
+void Stack_Init(void) {
+    uint32_t *ptr = &_end;
+    while (ptr < 0x24080000) {
+        *ptr++ =0xEFBEADDE; // DEADBEEF
+    }
+}
+
+#if 0
+uint32_t Get_Stack_Usage(void) {
+    uint32_t *ptr = &_stack_start;
+    uint32_t unused = 0;
+
+    while (*ptr == 0xDEADBEEF && ptr < &_end) {
+        ptr++;
+        unused++;
+    }
+
+    // Calculate used stack in bytes
+    return ((&_end - &_stack_start) - unused) * sizeof(uint32_t);
+}
+#endif
+
+
+#if 0
+void Disable_TIM4_Interrupt(void)
+{
+    // Check if the TIM4 interrupt is enabled in NVIC, and disable it if it is
+     //if (NVIC->ISER[TIM4_IRQn / 32] & (1 << (TIM4_IRQn % 32)))
+     {
+         // Disable TIM4 interrupt in the NVIC
+         HAL_NVIC_DisableIRQ(TIM4_IRQn);
+     }
+    
+     // Disable TIM4 clock if it's not used elsewhere
+     //if (__HAL_RCC_TIM4_IS_CLK_ENABLED()) 
+     {
+         __HAL_RCC_TIM4_CLK_DISABLE();
+     }
+
+}
+#endif
+
+//-----------------------------------------------------------------------------
+//                              main
+//-----------------------------------------------------------------------------
+int main(void)
+{
+    Stack_Init();
+
+
+    HAL_StatusTypeDef status = HAL_Init();
+    if(status != HAL_OK)
+    {
+        __BKPT();
+    }
+    
+    SystemClock_Config();
+
+
+    
+    CPU_CACHE_Enable();
+
+    
+
+    MPU_Config();
+
+
+    
+	//__HAL_RCC_WWDG_CLK_DISABLE();
+    // HAL_NVIC_DisableIRQ(WWDG_IRQn);
+
+
+    // Ensure WWDG is set to the maximum possible counter and disable EWI
+    //WWDG1->CFR &= ~WWDG_CFR_EWI;       // Disable Early Wakeup Interrupt
+    //WWDG1->CR = WWDG_CR_T | 0x7F;      // Set the counter to max value
+
+
+
+
+
+
+	ITM_Init();
+
+
+  uint32_t timeout = 0xFFFF;
+
+#if 0
+  /* Wait until CPU2 boots and enters in stop mode or timeout*/
+  timeout = 0xFFFF;
+  while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
+  if ( timeout < 0 )
+  {
+  Error_Handler();
+  }
+#endif
+
+  // Call DWT_Init after system clock is set
+  DWT_Init();
+
+
+
+  //==============================================
+  // Enable Cortex-M4 Boot
+  //__HAL_RCC_D2CKEN_CLK_ENABLE();
+
+  // Boot CPU2 (Cortex-M4) and set it to STOP mode
+  HAL_RCCEx_EnableBootCore(RCC_BOOT_C2);
+
+  // Wait for the CPU2 (Cortex-M4) to enter stop mode
+   timeout = 0xFFFF;
+   while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
+
+   if (timeout < 0)
+   {
+       Error_Handler();
+   }
+//===================================================
+
+/*HW semaphore Clock enable*/
+__HAL_RCC_HSEM_CLK_ENABLE();
+/*Take HSEM */
+HAL_HSEM_FastTake(HSEM_ID_0);
+/*Release HSEM in order to notify the CPU2(CM4)*/
+HAL_HSEM_Release(HSEM_ID_0,0);
+/* wait until CPU2 wakes up from stop mode */
+timeout = 0xFFFF;
+while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
+if ( timeout < 0 )
+{
+Error_Handler();
+}
+/* USER CODE END Boot_Mode_Sequence_2 */
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_ADC1_Init();
+  MX_DAC1_Init();
+
+  //HAL_StatusTypeDef status;
+  status = HAL_ADC_RegisterCallback( &hadc1,
+		                             HAL_ADC_CONVERSION_COMPLETE_CB_ID,
+									 HAL_ADC_ConvCpltCallback);
+  if (status != HAL_OK)
+  {
+      Error_Handler();
+  }
+
+  MX_USART3_UART_Init();
+  MX_USB_OTG_FS_PCD_Init();
+  MX_USART2_UART_Init();
+  MX_TIM2_Init();
+  //MX_WWDG1_Init();
+
+  // Enable the cycle counter
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Enable DWT
+  DWT->CYCCNT = 0;                                // Reset the cycle counter
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;            // Enable the cycle counter
+
+ // MX_SPI2_Init();
+ // HAL_SPI_MspInit(&hspi2);
+
+  MX_SPI4_Init();
+  HAL_SPI_MspInit(&hspi4);
+
+#if 0
+  
+  __attribute__((aligned(4))) uint16_t CLEAR = 0x8001;
+  __attribute__((aligned(4))) volatile uint16_t result= 0xDEAD;
+  if(HAL_OK !=  HAL_SPI_TransmitReceive(&hspi2,
+                            (uint8_t*)(&CLEAR),
+                            (uint8_t*)(&result),
+                            1, HAL_MAX_DELAY))
+  {
+    result *= 1;
+  }
+
+  #endif
+
+  MX_TIM1_Init();
+  MX_TIM8_Init();
+  TIM1->DIER |= TIM_DIER_UIE; 
+  
+ 
+#if 0
+  if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET) 
+  {
+      status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_TX_RX_COMPLETE_CB_ID, SPI_TxRx_completion_callback);
+      if(HAL_OK != status) { Error_Handler(); }
+  }
+#endif
+
+  status = HAL_TIM_Base_Start_IT(&htim1);
+  if(HAL_OK != status) { Error_Handler(); }
+
+  status = HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_1);
+  if(HAL_OK != status) { Error_Handler(); }
+
+  status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  if(HAL_OK != status) { Error_Handler(); }
+
+  // Introduce a 90-degree phase shift for TIM1
+  TIM8->CNT = TIM8->ARR / 4;
+
+
+  status =  HAL_TIM_Base_Start_IT(&htim8) ;
+  if (status != HAL_OK) { Error_Handler();}
+
+  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
+  if(HAL_OK != status) { Error_Handler(); }
+
+  status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
+  if(HAL_OK != status) { Error_Handler(); }
+
+  status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
+  if(HAL_OK != status) { Error_Handler(); }
+
+
+  //status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_RX_COMPLETE_CB_ID, HAL_SPI_RxCpltCallback);
+  //if(HAL_OK != status) { Error_Handler(); }
+
+
+  TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
+
+
+  enable_swo();
+
+  // Start DAC with DMA
+ // if (Start_ADC_DMA() != HAL_OK) // Ensure Start_ADC_DMA() returns a status
+ //  {
+ //      Error_Handler();  // Handle any DMA errors specifically
+ //  }
+
+
+
+//=======================================================================
+// spi DMA
+  /* Enable D2 SRAM clocks */
+   RCC->AHB2ENR |= (RCC_AHB2ENR_D2SRAM1EN | RCC_AHB2ENR_D2SRAM2EN | RCC_AHB2ENR_D2SRAM3EN);
+   volatile uint32_t tmpreg = RCC->AHB2ENR;
+   (void)tmpreg;  // Ensure clock enable
+
+   /* Set read issuing capability for AXI SRAM if needed (rev Y) */
+   if ((DBGMCU->IDCODE & 0xFFFF0000U) < 0x20000000U) {
+       *((__IO uint32_t*)0x51008108) = 0x000000001U;
+   }
+  //=======================================================================
+
+ // Disable_TIM4_Interrupt();  this was because it lloked like domething had enabled timer 4
+
+
+  cpp_main();
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+
+      // Nothing to do here; everything is handled in interrupts
+       __WFI();  // Wait for interrupt (low power)
+    
+  }
+  /* USER CODE END 3 */
+}
+
+

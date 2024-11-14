@@ -135,6 +135,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "stm32h7xx_hal.h"
 
+ void SPI_DMA_catchall(DMA_HandleTypeDef *hdma);
+
 /** @addtogroup STM32H7xx_HAL_Driver
   * @{
   */
@@ -2465,14 +2467,14 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive_DMA(SPI_HandleTypeDef *hspi, const uin
   }
 
   /* Set the SPI Tx/Rx DMA Half transfer complete callback */
-  hspi->hdmarx->XferHalfCpltCallback = SPI_DMAHalfTransmitReceiveCplt;
+  hspi->hdmarx->XferHalfCpltCallback = NULL; //SPI_DMAHalfTransmitReceiveCplt;
   hspi->hdmarx->XferCpltCallback     = SPI_DMATransmitReceiveCplt;
 
   /* Set the DMA error callback */
   hspi->hdmarx->XferErrorCallback = SPI_DMAError;
 
   /* Set the DMA AbortCallback */
-  hspi->hdmarx->XferAbortCallback = NULL;
+  hspi->hdmarx->XferAbortCallback = SPI_DMA_catchall; //NULL;
 
   /* Enable the Rx DMA Stream/Channel  */
   if (HAL_OK != HAL_DMA_Start_IT(hspi->hdmarx, (uint32_t)&hspi->Instance->RXDR, (uint32_t)hspi->pRxBuffPtr,
@@ -3386,6 +3388,13 @@ static void SPI_DMAReceiveCplt(DMA_HandleTypeDef *hdma)
     }
   }
 }
+
+
+void SPI_DMA_catchall(DMA_HandleTypeDef *hdma)
+{
+__BKPT();
+}
+
 
 /**
   * @brief  DMA SPI transmit receive process complete callback.
