@@ -6,22 +6,29 @@
 #ifndef STEPPER_MOTOR_H
 #define STEPPER_MOTOR_H
 
-#include "../../Inc/limit.hpp"
-//#include "../../Inc/pid.hpp"
+#include <vector>
+#include <cstddef>
+#include <cstdint>
 
-#include "../sensors/AS5048A.hpp"
+//#include <deque>
+#include <numeric>
+
+
+#include "limit.hpp"
+
+#include "AS5048A.hpp"
 
 #include "StepperDriver.hpp"
-#include "../common/foc_utils.hpp"
-#include "../common/time_utils.hpp"
-#include "../common/defaults.h"
+#include "foc_utils.hpp"
+#include "time_utils.hpp"
+#include "defaults.h"
 
 #include <cstdint>
 
-#include "../common/base_classes/CurrentSense.hpp"
+#include "CurrentSense.hpp"
 
-#include "../common/pid.hpp"
-#include "../common/lowpass_filter.hpp"
+#include "pid.hpp"
+#include "lowpass_filter.hpp"
 
 
 #ifdef __cplusplus
@@ -35,12 +42,6 @@ extern "C" {
 }
 #endif
 
-#include <vector>
-#include <cstddef>
-#include <cstdint>
-
-//#include <deque>
-#include <numeric>
 
 #define MICROSECONDS_PER_ITERATION (500)
 
@@ -330,7 +331,6 @@ class StepperMotor
     uint16_t get_as5048a_value(){return m_sensor.get_raw_count();}
     //void reinit_dma_for_spi(){m_sensor.reinit_dma_for_spi();}
     void update_buffers(uint16_t new_angle, uint32_t new_timestamp){m_sensor.update_buffers(new_angle,new_timestamp);}
-    void invalidate_as5048_cache(){m_sensor.invalidate_as5048_cache();}
     void start_spi_conversion(){m_sensor.start_spi_conversion();}
     void spi_reset_in_progress(){m_sensor.spi_reset_in_progress();}
 
@@ -347,15 +347,6 @@ class StepperMotor
     float read_angle_radians_from_buffer_with_offset();
     void update_samples(uint16_t raw_count);
     bool is_sample_valid(uint16_t raw_value){m_sensor.is_sample_valid(raw_value);}
-
-    
-    //-------------------------------------------------------------------------
-    //                        getSensorAngle_Radians
-    //-------------------------------------------------------------------------
-    float get_angle_radians()
-    {
-        return m_sensor.get_angle_radians();
-    }
 
     bool error_detected()
     {
@@ -469,10 +460,6 @@ class StepperMotor
       return false;
     }
 
-    float get_shaft_angle()
-    {
-        return m_shaft_angle;
-    }
 
     //-------------------------------------------------------------------------
     //                           normalize_radians

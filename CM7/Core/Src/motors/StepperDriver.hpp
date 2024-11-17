@@ -1,8 +1,6 @@
 #ifndef STEPPER_DRIVER_H
 #define STEPPER_DRIVER_H
 
-//#include "../../drivers/hardware_api.hpp"
-#include "../../inc/limit.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,14 +17,17 @@ extern void MX_TIM8_Init(void);
 }
 #endif
 
+#include <stdio.h>
+#include <string.h>
+#include <string>
 #include <stdint.h>
 #include <math.h>
-#include "../../Inc/clamp.hpp"
+
+#include "clamp.hpp"
+#include "limit.hpp"
+
 
 extern UART_HandleTypeDef huart2;
-#include "stdio.h"
-#include "string.h"
-#include <string>
 
 //#define _constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
 

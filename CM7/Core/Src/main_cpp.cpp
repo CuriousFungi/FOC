@@ -21,9 +21,11 @@
 #include "string.h"
 #include "stdio.h"
 
-#include "./motors/StepperMotor.hpp"
-#include "./common/time_utils.hpp"
-#include "./sensors/as5048a.hpp"
+#include "StepperMotor.hpp"
+#include "time_utils.hpp"
+#include "ElapsedTime.hpp"
+
+#include "as5048a.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,7 +86,6 @@ volatile float g_centered_voltage_a_absp925(0.0f);
 
 volatile float g_adc_to_voltage_b_0_5 (0.0f);
 volatile float g_centered_voltage_b_absp925(0.0f);
-volatile unsigned long g_us(0);
 
 
 
@@ -165,9 +166,9 @@ volatile float g_cmd_rps(0.0f);
 static float rps = 0.0f;
 void update_ramp(void)
 {
-     if (rps < 50.0f)
+     if (rps < 25.0f) // 50
      {
-        rps += 0.0002f;
+        rps += 0.01f;    //0.0002f;
         g_cmd_rps = rps;
         stepper.update_target_rad_per_sec(rps);
      }
@@ -286,6 +287,9 @@ extern uint8_t *aRxBuffer;
 extern "C"
 void complete_spi_conversion()
 {
+    stepper.set_async_read_complete();
+    
+#if 0    
     const uint16_t ERROR_BIT(0x4000);
     // Ensure memory ordering with a Data Memory Barrier
     __DMB();
@@ -313,8 +317,8 @@ void complete_spi_conversion()
 
     // Re-enable timer interrupt
     // TBV remove
-    __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE); 
-
+    //__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE); 
+#endif
 }
 
 extern "C"
@@ -325,7 +329,7 @@ int async_read_complete()
 
 
 extern "C"
-int set_async_read_complete()
+void set_async_read_complete()
 {
    stepper.set_async_read_complete();
 }
@@ -371,24 +375,13 @@ void cpp_main(void)
   //                     ( 1000.0f * ((1000.0f*V_REF) / static_cast<float>(0xFFFF)))
   //                    / (185.0f));
 
-
+  ElapsedTime elapsed_microseconds;
 
   while (1)
   {
-      static unsigned long prev_time = 0;
-      unsigned long curr_time    = micros();
-      unsigned long elapsed_time = curr_time - prev_time;
-      if(elapsed_time >= 500UL)  // MICROSECONDS_PER_ITERATION)
+      if(elapsed_microseconds.get() >= MICROSECONDS_PER_ITERATION)
       {   
-          //RefreshWatchdog();
           foc_iteration();
-          prev_time = curr_time;
-          g_us = elapsed_time;
-
-          if (stepper.async_read_complete()) // <--- TBD: find another way
-          {
-            // stepper.process_encoder_data();
-          }
       }
   }
 }

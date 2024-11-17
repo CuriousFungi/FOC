@@ -1,7 +1,8 @@
 
 #include "AS5048A.hpp"
-#include "../../Inc/EnumValue.hpp"
-#include "../common/time_utils.hpp"
+#include "EnumValue.hpp"
+#include "time_utils.hpp"
+#include "CriticalRegion.hpp"
 
 #include <math.h>
 
@@ -266,13 +267,6 @@ float AS5048A::read_angle_radians()
     return result;
 }
 
-//-----------------------------------------------------------------------------
-//                          get_angle_radians
-//-----------------------------------------------------------------------------
-float AS5048A::get_angle_radians()
-{  
-  return read_angle_radians_from_buffer();
-}
 
 //-----------------------------------------------------------------------------
 //                       conversion_complete
@@ -567,6 +561,7 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 //-----------------------------------------------------------------------------
 //                       read_angle_radians_from_buffer
 //-----------------------------------------------------------------------------
+#if 0
 float AS5048A::read_angle_radians_from_buffer()
 {
 	// Enter Critical region
@@ -582,19 +577,52 @@ float AS5048A::read_angle_radians_from_buffer()
     __set_PRIMASK(prim);               // Restore the interrupt state
     __enable_irq();
 
+    uint16_t raw_count_u16 = get_raw_count();
+
+
     // Convert the 14-bit angle data to radians
     // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
     float angle_radians = (static_cast<float>(latest_angle_u16) * TWO_PI) / AS5048_MAX;
 
     return angle_radians;
 }
+#endif
+//-----------------------------------------------------------------------------
+//                       fetch_radians
+//-----------------------------------------------------------------------------
+bool AS5048A::fetch_radians(float &result)
+{
+    volatile uint16_t raw_count_u16 = get_raw_count();
+
+    bool success = (0 == (0x4000 & raw_count_u16));
+    if(success)
+    {          success = true;
+       uint16_t count_14_bit = raw_count_u16&0x3FFF;
+
+       
+       // Convert the 14-bit angle data to radians
+       // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
+       result = (static_cast<float>(count_14_bit) * TWO_PI) / AS5048_MAX;
+    }
+
+    return success;
+
+}
 //-----------------------------------------------------------------------------
 //                       read_angle_radians_from_buffer
 //-----------------------------------------------------------------------------
 float AS5048A::read_radians_with_direction()
 {
-    float angle_radians = read_angle_radians_from_buffer();
-    return (m_invert_output) ? -angle_radians : angle_radians;
+    float angle_radians;
+
+    if(fetch_radians(angle_radians))
+    {
+        return (m_invert_output) ? -angle_radians : angle_radians;
+    }
+    else
+    {
+        return 0.0f;
+    }
 }
 
 #if 0
@@ -699,8 +727,9 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
     float time_total_seconds = (float)(time_total_us) * 1e-6f;
 
     current_sample.count            = spi_angle_buffer[SPI_BUFFER_SIZE - 1]; // latest sample for now
-    current_sample.radians          = read_angle_radians_from_buffer();
+    //current_sample.radians          = read_angle_radians_from_buffer();
     current_sample.radians_per_second = angle_diff_radians / time_total_seconds;
+    fetch_radians(current_sample.radians);
 
 
     return;
@@ -712,7 +741,21 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
 //-----------------------------------------------------------------------------
 uint16_t AS5048A::get_raw_count()
 {      
-    return AS5048A::m_spi_as5048_rx_buff[0];
+    CriticalRegion critical_region;
+
+//    critical_region.enter();
+
+    __DMB();
+    __DSB();
+    SCB_InvalidateDCache_by_Addr((uint32_t *)&AS5048A::m_spi_as5048_rx_buff, sizeof(m_spi_as5048_rx_buff[0]));
+
+    uint16_t raw_value_u16 = m_spi_as5048_rx_buff[0];
+
+ //   critical_region.exit();
+
+    // The parity bit 0x8000 might be set
+    // the error bit  0x4000 bight be set
+    return raw_value_u16;
 }
 
 //-----------------------------------------------------------------------------
@@ -809,7 +852,18 @@ uint8_t AS5048A::spiCalcEvenParity(uint16_t value)
 float AS5048A::get_mechanical_phase_angle_radians() 
 {
     //return m_prev_angle_radians;
-    return read_angle_radians_from_buffer();
+    //return read_angle_radians_from_buffer();
+    float result;
+    if(fetch_radians(result))
+    {
+        return result;
+    }
+    else
+    {
+        return 0.0f;
+    }
+    
+    
 }
 
 #if 0

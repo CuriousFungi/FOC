@@ -91,10 +91,6 @@ class AS5048A
     //-------------------------------------------------------------------------
     //float get_radians_per_second(); 
 
-    //-------------------------------------------------------------------------
-    //                        getSensorAngle_Radians
-    //-------------------------------------------------------------------------
-    float get_angle_radians();
 
     //-------------------------------------------------------------------------
     //                        error_detected
@@ -113,7 +109,7 @@ class AS5048A
     float    get_mechanical_phase_angle_radians();
 
     float    read_angle_radians();
-    bool     is_sample_valid(uint16_t value){return (0 == value &0x4000);}
+    bool     is_sample_valid(uint16_t value){return (0 == (value & 0x4000));}
     
     void     invert_output(bool invert);
     bool     is_direction_invert(){return m_invert_output;} // Temporary bridge
@@ -125,14 +121,12 @@ class AS5048A
     bool     async_read_complete(){return m_spi_async_read_complete;}
     void     set_async_read_complete(){m_spi_async_read_complete = true;}
     void     spi_reset_in_progress(){m_spi_reset_in_progress = true;}
-    float    read_angle_radians_from_buffer();
+   // float    read_angle_radians_from_buffer();
     float    read_radians_with_direction();
     void     async_read_angle();
     uint16_t get_count(){return spi_angle_buffer[spi_index_prev];}
-    void     invalidate_as5048_cache()
-    {
-        SCB_InvalidateDCache_by_Addr((uint32_t*)AS5048A::m_spi_as5048_rx_buff, 32);
-    }
+    
+    bool     fetch_radians(float &result);
 
     uint32_t calculate_time_difference(uint32_t current_timestamp, uint32_t last_timestamp);
 
