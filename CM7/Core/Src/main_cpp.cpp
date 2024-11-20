@@ -343,7 +343,7 @@ void cpp_main(void)
  volatile HAL_StatusTypeDef status = HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
 
 
-#if 1  
+#if 0  
   std::vector<float> speeds;
   for (float i = 0.0f; i <= 8.0f; i += 0.1f)
   {
