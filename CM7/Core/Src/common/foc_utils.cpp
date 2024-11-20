@@ -50,11 +50,17 @@ __attribute__((weak)) void _sincos(float a, float* s, float* c){
   *c = _cos(a);
 }
 
+float safe_fmodf(float x, float y) {
+    if (y == 0.0f || isnan(x) || isnan(y)) {
+        return NAN;
+    }
+    return x - y * floorf(x / y);
+}
 
 // normalizing radian angle to [0,2PI]
 __attribute__((weak)) float _normalizeAngle(float angle)
 {
-  float a = fmod(angle, _2PI);
+  float a = safe_fmodf(angle, _2PI);
   return a >= 0 ? a : (a + _2PI);
 }
 
