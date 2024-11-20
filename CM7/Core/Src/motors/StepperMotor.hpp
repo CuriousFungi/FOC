@@ -346,7 +346,7 @@ class StepperMotor
 
     float read_angle_radians_from_buffer_with_offset();
     void update_samples(uint16_t raw_count);
-    bool is_sample_valid(uint16_t raw_value){m_sensor.is_sample_valid(raw_value);}
+    bool is_sample_valid(uint16_t raw_value){return m_sensor.is_sample_valid(raw_value);}
 
     bool error_detected()
     {
