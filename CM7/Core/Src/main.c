@@ -491,6 +491,7 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 //-----------------------------------------------------------------------------
 //                     HAL_SPI_RxCpltCallback
 //-----------------------------------------------------------------------------
+extern void set_async_read_complete();
 void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance == SPI4) 
@@ -738,6 +739,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+    /** Enable Clock Failure Detection (CFD) for HSE */
+    //RCC->CR |= RCC_CR_CFDEN;
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
@@ -1524,7 +1528,8 @@ void Stack_Init(void) {
 
 void Stack_Init(void) {
     uint32_t *ptr = &_end;
-    while (ptr < 0x24080000) {
+    while (ptr < (uint32_t *)0x24080000)
+    {
         *ptr++ =0xEFBEADDE; // DEADBEEF
     }
 }
@@ -1775,6 +1780,12 @@ Error_Handler();
   //=======================================================================
 
  // Disable_TIM4_Interrupt();  this was because it lloked like domething had enabled timer 4
+
+  // Reset RCC status flags
+  RCC->RSR |= RCC_RSR_RMVF;
+
+  // Enable CSS monitor
+  //RCC->CR |= RCC_CR_CSSON;
 
 
   cpp_main();
