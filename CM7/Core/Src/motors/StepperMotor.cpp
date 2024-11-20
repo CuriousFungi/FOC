@@ -307,9 +307,9 @@ void StepperMotor::init()
 
     m_PID_angle.limit      = m_velocity_limit;
     
-    HAL_Delay(500);
+   // HAL_Delay(500);
     enable();   // enable motor
-    HAL_Delay(500);
+   // HAL_Delay(500);
 
     m_motor_status = FOC_MOTOR_STATUS::UNCALIBRATED;
 }
@@ -454,7 +454,7 @@ bool  StepperMotor::initFOC()
     // alignment necessary for encoders!
     // sensor and motor alignment - can be skipped
     // by setting motor.sensor_direction and motor.zero_electric_angle
-    HAL_Delay(500);
+ // disabled to debug reset  HAL_Delay(500);
 
     success &= alignSensor(); // bitwise intentional
 
