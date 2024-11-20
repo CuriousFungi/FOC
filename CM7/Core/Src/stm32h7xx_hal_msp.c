@@ -49,7 +49,13 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 
 //-----------------------------------------------------------------------------
 //                              HAL_MspInit
+//
+// 1.  HAL_SYSCFG_EnableVREFBUF function requires the VREFBUF clock to be enabled.
+// 2.  The HAL_GetTick function relies on the SysTick timer, which must be properly
+//     configured before HAL_SYSCFG_EnableVREFBUF is called.
+// 3. Verify that the VREFBUF address is in perheral memory
 //-----------------------------------------------------------------------------
+#if 0
 void HAL_MspInit(void)
 {
   __HAL_RCC_SYSCFG_CLK_ENABLE();
@@ -66,6 +72,34 @@ void HAL_MspInit(void)
   // Enable SRAM1
   __HAL_RCC_D2SRAM1_CLK_ENABLE();
 }
+#else
+void HAL_MspInit(void)
+{
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
+  __HAL_RCC_VREF_CLK_ENABLE();
+
+  // Configure the internal voltage reference buffer high impedance mode
+  HAL_SYSCFG_VREFBUF_HighImpedanceConfig(SYSCFG_VREFBUF_HIGH_IMPEDANCE_DISABLE);
+
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
+  __HAL_RCC_VREF_CLK_ENABLE();
+
+
+  HAL_SYSCFG_VREFBUF_VoltageScalingConfig(SYSCFG_VREFBUF_VOLTAGE_SCALE0);
+
+  // Enable the Internal Voltage Reference buffer
+  HAL_SYSCFG_EnableVREFBUF();
+
+  HAL_SYSCFG_VREFBUF_HighImpedanceConfig(SYSCFG_VREFBUF_HIGH_IMPEDANCE_DISABLE);
+
+
+  // Enable SRAM1
+  __HAL_RCC_D2SRAM1_CLK_ENABLE();
+}
+
+#endif
+
+
 
 //-----------------------------------------------------------------------------
 //                              HAL_ADC_MspInit

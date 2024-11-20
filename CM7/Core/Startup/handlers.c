@@ -3,6 +3,24 @@
 
 #if 1
      // void __attribute__((used))      NMI_Handler
+     void NMI_Handler(void) {
+         if (RCC->CIFR & RCC_CIFR_HSECSSF) {
+             // Clear the CSS flag
+             RCC->CICR |= RCC_CICR_HSECSSC;
+     
+             // Switch to HSI to maintain system operation
+             RCC->CFGR &= ~RCC_CFGR_SW;  // Clear clock source bits
+             RCC->CFGR |= RCC_CFGR_SW_HSI;  // Switch to HSI
+
+             __BKPT();
+             // Optionally log or indicate an error
+             Error_Handler();  // Call your error handling routine
+         }
+     }
+
+
+
+
 	 // void __attribute__((used))      HardFault_Handler
 	 // void __attribute__((used))      MemManage_Handler
 	 // void __attribute__((used))      BusFault_Handler
@@ -29,7 +47,7 @@
 	 // void __attribute__((used))      DMA1_Stream4_IRQHandler(void){__BKPT();}
 	  void __attribute__((used))      DMA1_Stream5_IRQHandler(void){__BKPT();}
 	  void __attribute__((used))      DMA1_Stream6_IRQHandler(void){__BKPT();}
-	  void __attribute__((used))      ADC_IRQHandler(void){__BKPT();}
+	  //void __attribute__((used))      ADC_IRQHandler(void){__BKPT();}
 	  void __attribute__((used))      FDCAN1_IT0_IRQHandler(void){__BKPT();}
 	  void __attribute__((used))      FDCAN2_IT0_IRQHandler(void){__BKPT();}
 	  void __attribute__((used))      FDCAN1_IT1_IRQHandler(void){__BKPT();}
