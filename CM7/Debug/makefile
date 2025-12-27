@@ -1,6 +1,6 @@
 ################################################################################
 # Automatically-generated file. Do not edit!
-# Toolchain: GNU Tools for STM32 (12.3.rel1)
+# Toolchain: GNU Tools for STM32 (13.3.rel1)
 ################################################################################
 
 -include ../makefile.init
@@ -89,8 +89,8 @@ all: main-build
 main-build: project3_CM7.elf secondary-outputs
 
 # Tool invocations
-project3_CM7.elf project3_CM7.map: $(OBJS) $(USER_OBJS) C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\STM32H755ZITX_RAM.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-g++ -o "project3_CM7.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\STM32H755ZITX_RAM.ld" --specs=nosys.specs -Wl,-Map="project3_CM7.map" -Wl,--cref -Wl,--verbose -static -L../../Drivers/CMSIS/DSP/Lib/GCC -Wl,--warn-section-align -Wl,--gc-sections -Wl,--print-gc-sections -Wl,--verbose -Wl,--check-sections -Wl,--print-memory-usage --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+project3_CM7.elf project3_CM7.map: $(OBJS) $(USER_OBJS) C:\_projects\FOC\cube\project3\CM7\STM32H755ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-g++ -o "project3_CM7.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\_projects\FOC\cube\project3\CM7\STM32H755ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="project3_CM7.map" -Wl,--cref -Wl,--verbose -static -LC:/Users/fresh/STM32Cube/Repository/STM32Cube_FW_H7_V1.12.1/Drivers/CMSIS/DSP/Lib/GCC -Wl,--warn-section-align -Wl,--print-gc-sections -Wl,--verbose -Wl,--check-sections -Wl,--print-memory-usage --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

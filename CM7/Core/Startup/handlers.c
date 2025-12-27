@@ -14,7 +14,7 @@
 
              __BKPT();
              // Optionally log or indicate an error
-             Error_Handler();  // Call your error handling routine
+            // Error_Handler();  // Call your error handling routine
          }
      }
 

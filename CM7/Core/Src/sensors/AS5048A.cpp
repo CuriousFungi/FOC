@@ -19,6 +19,8 @@ extern TIM_HandleTypeDef htim1;
 
 volatile uint16_t g_as5048_u16_angle(0);
 volatile float g_as5048_velocity(0.0f);
+volatile float g_as5048_angle(0.0f);  // Forward declaration - defined later in file
+volatile uint32_t g_as5048_update_count(0);  // Debug: count how many times update_buffers is called
 
 extern volatile float g_experimental_velocity;
 
@@ -542,6 +544,7 @@ void AS5048A::init_SPI_buffers(void)
 void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 {    
   m_spi_async_read_complete = true;
+  g_as5048_update_count++;  // Debug: increment counter to verify function is called
 #if 0
     // Update the current position in the circular buffer
     spi_angle_buffer[    spi_index_curr] = new_angle;
@@ -554,7 +557,63 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
     // Mark that data is ready for processing
     //m_spi_async_read_complete = true;
 #endif    
-    g_as5048_u16_angle = new_angle; 
+    g_as5048_u16_angle = new_angle;
+    
+    // CRITICAL: Also update the float angle directly so STM32CubeMonitor can see it
+    // Convert 14-bit angle (0-16383) to radians (0-2π)
+    float current_angle_radians = (static_cast<float>(new_angle) * TWO_PI) / AS5048_MAX;
+    g_as5048_angle = current_angle_radians;
+    
+    // CRITICAL: Calculate velocity from angle change over time
+    // Only calculate if we have a previous sample
+    if (m_prev_angle_timestamp_us > 0)
+    {
+        // Calculate time difference (handle microsecond rollover)
+        uint32_t delta_time_us;
+        uint32_t prev_timestamp = static_cast<uint32_t>(m_prev_angle_timestamp_us);
+        if (new_timestamp >= prev_timestamp)
+        {
+            delta_time_us = new_timestamp - prev_timestamp;
+        }
+        else
+        {
+            // Handle rollover (unlikely but possible)
+            delta_time_us = (0xFFFFFFFFU - prev_timestamp) + new_timestamp + 1;
+        }
+        
+        // CRITICAL: Only calculate velocity if time delta is large enough to avoid noise
+        // SPI updates can be very frequent (e.g., 25us), causing large velocity spikes
+        // Minimum time delta: 100 microseconds (0.1ms) = 10kHz max update rate for velocity
+        const uint32_t MIN_DELTA_TIME_US = 100;
+        if (delta_time_us >= MIN_DELTA_TIME_US)
+        {
+            // Calculate angle difference (handle wrap-around at 0/2π)
+            float delta_angle = current_angle_radians - m_prev_angle_radians;
+            if (delta_angle > M_PI)
+            {
+                delta_angle -= TWO_PI;  // Handle wrap-around
+            }
+            else if (delta_angle < -M_PI)
+            {
+                delta_angle += TWO_PI;  // Handle wrap-around
+            }
+            
+            // Calculate velocity in rad/s
+            float delta_time_seconds = static_cast<float>(delta_time_us) * 1e-6f;
+            float velocity_rad_per_sec = delta_angle / delta_time_seconds;
+            
+            // CRITICAL: Apply exponential filtering to smooth velocity and reduce noise
+            // Filter coefficient: 0.1 = heavy filtering (smooth), 1.0 = no filtering (raw)
+            const float VELOCITY_FILTER_ALPHA = 0.3f;  // Moderate filtering
+            g_as5048_velocity = (VELOCITY_FILTER_ALPHA * velocity_rad_per_sec) + 
+                                ((1.0f - VELOCITY_FILTER_ALPHA) * g_as5048_velocity);
+        }
+        // If delta_time_us < MIN_DELTA_TIME_US, keep previous velocity (don't update)
+    }
+    
+    // Update previous values for next calculation
+    m_prev_angle_radians = current_angle_radians;
+    m_prev_angle_timestamp_us = static_cast<long>(new_timestamp);
 }
 
 
@@ -587,12 +646,29 @@ float AS5048A::read_angle_radians_from_buffer()
     return angle_radians;
 }
 #endif
+
+// g_as5048_angle already declared at top of file (line 22)
 //-----------------------------------------------------------------------------
 //                       fetch_radians
+//
+// AS5048A::start_spi_conversion() loads the buffer with 0xdead before starting
+// the conversion. If raw_count_u16 returns 0xdead it means that a conversion is 
+// in progress.
+//
+// TODO: limit the time spent in the do/while loop
+//
+// TODO: switch to returning an enum status ok, no result, invalid result. think
+//       about return by value versus modify reference.
 //-----------------------------------------------------------------------------
 bool AS5048A::fetch_radians(float &result)
 {
-    volatile uint16_t raw_count_u16 = get_raw_count();
+    uint16_t raw_count_u16;
+    do
+    {
+       raw_count_u16 = get_raw_count();
+    }
+    while (0xdead ==raw_count_u16);
+    
 
     bool success = (0 == (0x4000 & raw_count_u16));
     if(success)
@@ -603,6 +679,8 @@ bool AS5048A::fetch_radians(float &result)
        // Convert the 14-bit angle data to radians
        // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
        result = (static_cast<float>(count_14_bit) * TWO_PI) / AS5048_MAX;
+       
+       g_as5048_angle = result;
     }
 
     return success;

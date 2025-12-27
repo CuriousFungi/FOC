@@ -166,6 +166,10 @@ uint32_t common_system_clock;
   SystemCoreClock = common_system_clock;
 #endif /* DUAL_CORE && CORE_CM4 */
 
+// TBV TBD work around. seems more likly that .data isn't copied correctly
+  uwTickFreq = HAL_TICK_FREQ_DEFAULT;  // 1KHz 
+
+
   /* Use systick as time base source and configure 1ms tick (default clock after Reset is HSI) */
   if(HAL_InitTick(TICK_INT_PRIORITY) != HAL_OK)
   {
@@ -564,18 +568,30 @@ HAL_StatusTypeDef HAL_SYSCFG_EnableVREFBUF(void)
 {
   uint32_t  tickstart;
 
+  uint32_t curr_tick;
+  uint32_t prev_tick;
+
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
+
   SET_BIT(VREFBUF->CSR, VREFBUF_CSR_ENVR);
 
   /* Get Start Tick*/
   tickstart = HAL_GetTick();
+  prev_tick = tickstart;
 
   /* Wait for VRR bit  */
   while(READ_BIT(VREFBUF->CSR, VREFBUF_CSR_VRR) == 0UL)
   {
-    if((HAL_GetTick() - tickstart) > VREFBUF_TIMEOUT_VALUE)
-    {
-      return HAL_TIMEOUT;
-    }
+	curr_tick = HAL_GetTick();
+	if(curr_tick != prev_tick)
+	{
+		if((curr_tick - tickstart) > 1000)
+	    {
+	      return HAL_TIMEOUT;
+	    }
+		prev_tick = curr_tick;
+	}
+
   }
 
   return HAL_OK;

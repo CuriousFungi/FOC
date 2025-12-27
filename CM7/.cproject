@@ -47,16 +47,16 @@
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.includepaths.919662225" name="Include paths (-I)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.includepaths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="../Core/Inc"/>
-									<listOptionValue builtIn="false" value="../..Drivers/CMSIS/DSP/Include"/>
 									<listOptionValue builtIn="false" value="../../Drivers/STM32H7xx_HAL_Driver/Inc"/>
 									<listOptionValue builtIn="false" value="../../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy"/>
 									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/Device/ST/STM32H7xx/Include"/>
 									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/Include"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\sensors&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\motors&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\common&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\common\base_classes&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Inc&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\sensors&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\motors&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\common&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\common\base_classes&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Inc&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32Cube\Repository\STM32Cube_FW_H7_V1.12.1\Drivers\CMSIS\DSP\Include&quot;"/>
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.otherflags.32537135" name="Other flags" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.otherflags" useByScannerDiscovery="true" valueType="stringList">
 									<listOptionValue builtIn="false" value="-fno-section-anchors"/>
@@ -77,17 +77,18 @@
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.compiler.option.includepaths.1824714957" name="Include paths (-I)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.compiler.option.includepaths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="../Core/Inc"/>
-									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/DSP/Include"/>
-									<listOptionValue builtIn="false" value="&quot;C:\ST\STM32CubeIDE_1.16.0\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.12.3.rel1.win32_1.0.200.202406191623\tools\arm-none-eabi\include\c++\12.3.1&quot;"/>
 									<listOptionValue builtIn="false" value="../../Drivers/STM32H7xx_HAL_Driver/Inc"/>
 									<listOptionValue builtIn="false" value="../../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy"/>
 									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/Device/ST/STM32H7xx/Include"/>
-									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/Include"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Inc&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\sensors&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\motors&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\common&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32CubeIDE\workspace_1.16.0\project3\CM7\Core\Src\common\base_classes&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32Cube\Repository\STM32Cube_FW_H7_V1.12.1\Drivers\CMSIS\DSP\Include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\ST\STM32CubeIDE_2.0.0\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.win32_1.0.100.202509120712\tools\arm-none-eabi\include\c++\13.3.1&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\Drivers\CMSIS\DSP\Include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Inc&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\sensors&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\motors&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\common&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\_projects\FOC\cube\project3\CM7\Core\Src\common\base_classes&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;C:\Users\fresh\STM32Cube\Repository\STM32Cube_FW_H7_V1.12.1\Drivers\CMSIS\Include&quot;"/>
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.compiler.option.otherflags.605150264" name="Other flags" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.compiler.option.otherflags" useByScannerDiscovery="true" valueType="stringList">
 									<listOptionValue builtIn="false" value="-fno-common"/>
@@ -104,11 +105,10 @@
 							</tool>
 							<tool id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.linker.1805730602" name="MCU/MPU GCC Linker" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.linker"/>
 							<tool id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.1153414044" name="MCU/MPU G++ Linker" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker">
-								<option id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.script.265118415" name="Linker Script (-T)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.script" value="${workspace_loc:/${ProjName}/STM32H755ZITX_RAM.ld}" valueType="string"/>
+								<option id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.script.265118415" name="Linker Script (-T)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.script" value="C:\_projects\FOC\cube\project3\CM7\STM32H755ZITX_FLASH.ld" valueType="string"/>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="true" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.additionalobjs.1921779794" name="Additional object files" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.additionalobjs" valueType="userObjs"/>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.otherflags.71969972" name="Other flags" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.otherflags" valueType="stringList">
 									<listOptionValue builtIn="false" value="-Wl,--warn-section-align"/>
-									<listOptionValue builtIn="false" value="-Wl,--gc-sections"/>
 									<listOptionValue builtIn="false" value="-Wl,--print-gc-sections"/>
 									<listOptionValue builtIn="false" value="-Wl,--verbose"/>
 									<listOptionValue builtIn="false" value="-Wl,--check-sections"/>
@@ -119,7 +119,7 @@
 									<listOptionValue builtIn="false" value="arm_cortexM7lfdp_math"/>
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.directories.1449496091" name="Library search path (-L)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.directories" valueType="libPaths">
-									<listOptionValue builtIn="false" value="../../Drivers/CMSIS/DSP/Lib/GCC"/>
+									<listOptionValue builtIn="false" value="C:/Users/fresh/STM32Cube/Repository/STM32Cube_FW_H7_V1.12.1/Drivers/CMSIS/DSP/Lib/GCC"/>
 								</option>
 								<option id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.gcsections.2054042768" name="Discard unused sections (-Wl,--gc-sections)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.gcsections" value="false" valueType="boolean"/>
 								<option id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.cref.1970226069" name="Add symbol cross reference table to map file (-Wl,--cref)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.cpp.linker.option.cref" value="true" valueType="boolean"/>

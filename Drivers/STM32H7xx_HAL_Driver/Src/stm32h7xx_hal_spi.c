@@ -168,7 +168,7 @@ static void SPI_DMAReceiveCplt(DMA_HandleTypeDef *hdma);
 static void SPI_DMATransmitReceiveCplt(DMA_HandleTypeDef *hdma);
 static void SPI_DMAHalfTransmitCplt(DMA_HandleTypeDef *hdma);
 static void SPI_DMAHalfReceiveCplt(DMA_HandleTypeDef *hdma);
-static void SPI_DMAHalfTransmitReceiveCplt(DMA_HandleTypeDef *hdma);
+//static void SPI_DMAHalfTransmitReceiveCplt(DMA_HandleTypeDef *hdma);
 static void SPI_DMAError(DMA_HandleTypeDef *hdma);
 static void SPI_DMAAbortOnError(DMA_HandleTypeDef *hdma);
 static void SPI_DMATxAbortCallback(DMA_HandleTypeDef *hdma);
@@ -3466,6 +3466,7 @@ static void SPI_DMAHalfReceiveCplt(DMA_HandleTypeDef *hdma) /* Derogation MISRAC
   *               the configuration information for the specified DMA module.
   * @retval None
   */
+#if 0
 static void SPI_DMAHalfTransmitReceiveCplt(DMA_HandleTypeDef *hdma) /* Derogation MISRAC2012-Rule-8.13 */
 {
   SPI_HandleTypeDef *hspi = (SPI_HandleTypeDef *)
@@ -3477,6 +3478,7 @@ static void SPI_DMAHalfTransmitReceiveCplt(DMA_HandleTypeDef *hdma) /* Derogatio
   HAL_SPI_TxRxHalfCpltCallback(hspi);
 #endif /* USE_HAL_SPI_REGISTER_CALLBACKS */
 }
+#endif
 
 /**
   * @brief  DMA SPI communication error callback.

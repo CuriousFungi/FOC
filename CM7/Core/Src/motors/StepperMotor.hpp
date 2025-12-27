@@ -43,7 +43,7 @@ extern "C" {
 #endif
 
 
-#define MICROSECONDS_PER_ITERATION (500)
+#define MICROSECONDS_PER_ITERATION (100) //(500)
 
 
 // move to sensor
@@ -410,7 +410,7 @@ class StepperMotor
 
     //float shaft_radians_per_second();         // from FOCMotor::
     float get_electric_angle_radians();       // from FOCMotor::
-    float get_electric_angle_radians_v2();
+
 
   
     float get_filtered_shaft_angle();
@@ -503,6 +503,7 @@ class StepperMotor
     float calculate_smoothing_rate(float target_electrical_rps);
 
     const float         MY_PI; 
+    const float         HALF_PI;
     const float         TWO_PI;
     const float         THREE_PI;
     const float         THREE_HALVES_PI;
@@ -648,6 +649,7 @@ class StepperMotor
 
     
     float               m_target_voltage_q;
+    float               m_accumulated_mechanical_radians; // For open-loop angle generation
 
 
    

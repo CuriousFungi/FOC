@@ -177,6 +177,22 @@ SECTIONS
     . = ALIGN(8);
   } >RAM_D1
 
+ 
+  
+  .dma_tx_buffer2  (NOLOAD) : /* 0x30040000 */
+  {
+	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
+    *(.dma_tx_buffer2)      /* Use the .spi_buffers_32 section in code */
+    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
+  }  >RAM_D2 AT>RAM_D2
+
+
+  .dma_rx_buffer2  (NOLOAD) : /* 0x30040100 */
+  {
+	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */
+    *(.dma_rx_buffer2)      /* Use the .spi_buffers_32 section in code */
+    . = ALIGN(32);          /* Maintain 4-byte alignment for subsequent sections */
+  }  >RAM_D2 AT>RAM_D2
 
 
   /* Remove information from the compiler libraries */

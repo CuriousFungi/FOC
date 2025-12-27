@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 
 #include <stdio.h>
+#include <stdbool.h>
 
 //#define USE_HAL_ADC_REGISTER_CALLBACKS (1)
 
@@ -519,7 +520,7 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
         //static uint32_t last_overrun_status = 0;
 
         uint32_t sr_status       = hspi->Instance->SR;        
-        uint32_t dma_lisr_status = DMA1->LISR;
+        //uint32_t dma_lisr_status = DMA1->LISR;
 
            // Check for EOT (Bit 15)
            if (sr_status & SPI_SR_EOT) {
@@ -773,24 +774,6 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-#if 0
-// For Timer 1, Channel 1 (PE9) and Channel 2 (PE11)
-GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_11;
-GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-GPIO_InitStruct.Pull = GPIO_NOPULL;
-GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-// For Timer 8, Channel 1 (PC6) and Channel 3 (PC8)
-GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_8;
-GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-GPIO_InitStruct.Pull = GPIO_NOPULL;
-GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-GPIO_InitStruct.Alternate = GPIO_AF3_TIM8;
-HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-#endif
-
 
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
@@ -1022,7 +1005,7 @@ static void MX_SPI4_Init(void)
   hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi4.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;  // 100 MHz / 16 = 6.25 MHz (under 10 MHz AS5048A max)
   hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1114,12 +1097,12 @@ static void MX_SPI4_Init(void)
     Error_Handler();
   }
   
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCMode       = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse        = 0;
+  sConfigOC.OCPolarity   = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode   = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState  = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
@@ -1129,17 +1112,17 @@ static void MX_SPI4_Init(void)
   {
     Error_Handler();
   }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateRunMode  = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  sBreakDeadTimeConfig.LockLevel        = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime         = 200; // 200 ticks0;
+  sBreakDeadTimeConfig.BreakState       = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter      = 0;
+  sBreakDeadTimeConfig.Break2State      = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity   = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter     = 0;
+  sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
   if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1238,7 +1221,6 @@ static void MX_TIM2_Init(void)
   /* USER CODE END TIM8_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -1266,59 +1248,61 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_OC_Init(&htim8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_DISABLE;
-  sSlaveConfig.InputTrigger = TIM_TS_ITR0;
-  if (HAL_TIM_SlaveConfigSynchro(&htim8, &sSlaveConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC3REF;
+  // Removed HAL_TIM_OC_Init() - was conflicting with PWM mode
+  // if (HAL_TIM_OC_Init(&htim8) != HAL_OK)
+  // {
+  //   Error_Handler();
+  // }
+  sMasterConfig.MasterOutputTrigger  = TIM_TRGO_UPDATE;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
+  sMasterConfig.MasterSlaveMode      = TIM_MASTERSLAVEMODE_ENABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCMode       = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse        = 0;
+  sConfigOC.OCPolarity   = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode   = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState  = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
+  
+  sConfigOC.OCMode       = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse        = 0;
+  sConfigOC.OCPolarity   = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode   = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState  = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+
   if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  if (HAL_TIM_OC_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_6) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateRunMode  = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 200; // 200 ticks0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  sBreakDeadTimeConfig.LockLevel        = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime         = 200; // 200 ticks0;
+  sBreakDeadTimeConfig.BreakState       = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter      = 0;
+  sBreakDeadTimeConfig.Break2State      = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity   = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter     = 0;
+  sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
   if (HAL_TIMEx_ConfigBreakDeadTime(&htim8, &sBreakDeadTimeConfig) != HAL_OK)
   {
     Error_Handler();
   }
   /* USER CODE BEGIN TIM8_Init 2 */
+
+
+
 
 // new
   // Manually enable interrupt after setting up the timer
@@ -1742,11 +1726,22 @@ Error_Handler();
   status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
   if(HAL_OK != status) { Error_Handler(); }
 
+  // PC7 outputs TIM8_CH2 (regular output), not CH2N
   status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
   if(HAL_OK != status) { Error_Handler(); }
 
-  status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
-  if(HAL_OK != status) { Error_Handler(); }
+ // After starting TIM8 CH2 with PWMN_Start, check CCER again:
+  uint32_t ccer_after = TIM8->CCER;
+  volatile bool cc2e_after = (ccer_after & TIM_CCER_CC2E) != 0;
+  volatile bool cc2ne_after = (ccer_after & TIM_CCER_CC2NE) != 0;
+  
+  // Check CCR2 register values (compare registers) - these determine duty cycle
+  volatile uint32_t ccr2_tim8 = TIM8->CCR2;
+  volatile uint32_t ccr2_tim1 = TIM1->CCR2;
+  
+  // Check ARR (auto-reload) values
+  volatile uint32_t arr_tim8 = TIM8->ARR;
+  volatile uint32_t arr_tim1 = TIM1->ARR;
 
 
   //status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_RX_COMPLETE_CB_ID, HAL_SPI_RxCpltCallback);
@@ -1754,6 +1749,60 @@ Error_Handler();
 
 
   TIM1->DIER |= TIM_DIER_UIE;  // Enable update interrupt
+
+
+  // After starting TIM8 CH2, check:
+uint32_t ccer = TIM8->CCER;
+volatile bool cc2e_enabled = (ccer & TIM_CCER_CC2E) != 0;   // Should be 1
+volatile bool cc2ne_enabled = (ccer & TIM_CCER_CC2NE) != 0; // Should be 0
+
+// Compare with TIM1:
+uint32_t ccer1 = TIM1->CCER;
+volatile bool tim1_cc2e = (ccer1 & TIM_CCER_CC2E) != 0;
+volatile bool tim1_cc2ne = (ccer1 & TIM_CCER_CC2NE) != 0;
+
+
+// Check the polarity bits - this is the key!
+volatile bool cc2p_tim8 = (ccer & TIM_CCER_CC2P) != 0;   // TIM8 CH2 polarity
+volatile bool cc2p_tim1 = (ccer1 & TIM_CCER_CC2P) != 0;  // TIM1 CH2 polarity
+
+// Also check the full CCER values for comparison
+volatile uint32_t ccer_full_tim8 = ccer;
+volatile uint32_t ccer_full_tim1 = ccer1;
+
+
+// Check CCMR1 register - OC2M mode should be the same
+volatile uint32_t ccmr1_tim8 = TIM8->CCMR1;
+volatile uint32_t ccmr1_tim1 = TIM1->CCMR1;
+
+// Extract OC2M bits (bits 12-14 in CCMR1 for channel 2)
+volatile uint32_t oc2m_tim8 = (ccmr1_tim8 & TIM_CCMR1_OC2M) >> 8U;
+volatile uint32_t oc2m_tim1 = (ccmr1_tim1 & TIM_CCMR1_OC2M) >> 8U;
+
+// Check BDTR register (dead time configuration)
+volatile uint32_t bdtr_tim8 = TIM8->BDTR;
+volatile uint32_t bdtr_tim1 = TIM1->BDTR;
+
+// Check CR2 register (output idle states)
+volatile uint32_t cr2_tim8 = TIM8->CR2;
+volatile uint32_t cr2_tim1 = TIM1->CR2;
+
+// Check if there's a difference in OIS2 (Output Idle State for CH2)
+volatile bool ois2_tim8 = (cr2_tim8 & TIM_CR2_OIS2) != 0;
+volatile bool ois2_tim1 = (cr2_tim1 & TIM_CR2_OIS2) != 0;
+
+
+// Check GPIO alternate function for PC7
+volatile uint32_t afrl_pc = GPIOC->AFR[0];  // AFR[0] covers pins 0-7
+volatile uint32_t pc7_af = (afrl_pc >> (7 * 4)) & 0xF;  // Extract AF for PC7 (bits 28-31)
+
+// PC7 should be AF3 (TIM8_CH2), verify it's not accidentally CH2N routing
+
+if (cc2e_enabled || cc2ne_enabled || tim1_cc2e || tim1_cc2ne || cc2p_tim8 || cc2p_tim1)
+		{
+			;
+		}
+
 
 
   enable_swo();

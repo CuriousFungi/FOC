@@ -167,6 +167,101 @@
   * @{
   */
 
+
+#include <stdint.h>
+
+/* Linker script symbols for memory regions */
+extern volatile uint32_t _estack;          /* Top of the stack */
+extern volatile uint32_t _sidata;          /* Start of the initialized data in FLASH */
+
+
+extern volatile uint32_t _sdata;           /* Start of the initialized data in RAM */
+//static volatile uint32_t __attribute__((section(".data"), used)) _sdata;
+
+extern volatile uint32_t _edata;           /* End of the initialized data in RAM */
+//static volatile uint32_t __attribute__((section(".data"), used)) _edata;
+
+extern volatile uint32_t _sbss;            /* Start of the uninitialized data in RAM */
+//static volatile uint32_t __attribute__((section(".bss"), used)) _sbss;
+
+extern volatile uint32_t _ebss;            /* End of the uninitialized data in RAM */
+//static volatile uint32_t __attribute__((section(".bss"), used)) _ebss;
+
+
+extern volatile uint32_t _isr_vector_start; /* Start of ISR table in FLASH */
+//static volatile uint32_t __attribute__((section(".isr_vector"), used)) _isr_vector_start;
+
+extern volatile uint32_t _isr_vector_end;   /* End of ISR table in FLASH */
+//static volatile uint32_t __attribute__((section(".isr_vector"), used)) _isr_vector_end;
+
+extern volatile uint32_t _isr_vector_ram;   /* Start of ISR table in RAM */
+//static volatile uint32_t __attribute__((aligned(128), section(".isr_vector"), used)) _isr_vector_ram[64];
+
+
+/* External function declarations */
+void SystemInit(void);            /* Provided by CMSIS or HAL to initialize the clock system */
+void __libc_init_array(void);     /* Provided by the C runtime to handle static constructors */
+void main(void);                  /* User-defined main application entry point */
+
+#if 0
+void Reset_Handler(void) __attribute__((weak, alias("Default_Reset_Handler")));
+
+/* Default Reset Handler if no custom one is provided */
+__attribute__((optimize("O0")))
+void Default_Reset_Handler(void)
+{
+    /* Set the stack pointer */
+    __set_MSP((uint32_t)&_estack);
+
+    /* Call the system initialization function */
+    SystemInit();
+#if 0
+
+    volatile uint32_t *pSrc      = (uint32_t *) &_isr_vector_start;
+    volatile uint32_t *pSrc_end  = (uint32_t *) &_isr_vector_end;
+    uint32_t *pDest     = (uint32_t *) 0x24000000; /* Explicitly point to start of RAM_D1 */
+    
+    while (pSrc < pSrc_end)
+    {
+        *pDest++ = *pSrc++;
+    }
+
+    asm volatile("" : : "r"(pSrc), "r"(pDest));
+
+    /* Update the VTOR to point to the relocated vector table */
+    SCB->VTOR = (uint32_t *) 0x24000000;
+
+    /* Copy the `.data` section from FLASH to RAM */
+    pSrc  = (uint32_t *)&_sidata;
+    pDest = (uint32_t *)&_sdata;
+    while (pDest < &_edata)
+    {
+        *pDest++ = *pSrc++;
+    }
+
+    /* Zero the `.bss` section in RAM */
+    pDest = &_sbss;
+    while (pDest < &_ebss) 
+    {
+        *pDest++ = 0;
+    }
+#endif   
+
+    /* Call static constructors for C++ support */
+    __libc_init_array();
+ 
+
+    /* Call the main application entry point */
+    main();
+
+    /* Infinite loop if main returns (should never happen) */
+    while (1) {
+        ;
+    }
+}
+
+#endif
+
 /**
   * @brief  Setup the microcontroller system
   *         Initialize the FPU setting and  vector table location
@@ -174,13 +269,29 @@
   * @param  None
   * @retval None
   */
+
+
+#if defined(CORE_CM7)
+
+#include "cmsis_gcc.h"
+
+static inline void Clear_FPSCR_Flags(void) {
+    __set_FPSCR(__get_FPSCR() & ~(0x20000010)); // Clear Q flag and inexact result
+}
+
+static inline void Enable_DivideByZero_Trap(void) {
+    SCB->CCR |= SCB_CCR_DIV_0_TRP_Msk; // Enable divide-by-zero trapping
+}
+
+static inline void Enable_InvalidOperation_Trap(void) {
+    FPU->FPDSCR |= (1 << 8); // Enable invalid operation trapping
+}
+#endif
+
+
+
 void SystemInit (void)
 {
-
-  // Set VTOR to RAM_D1
-  SCB->VTOR = 0x24000000;
-
-
 
   /* FPU settings ------------------------------------------------------------*/
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
@@ -262,6 +373,14 @@ void SystemInit (void)
     /* Change  the switch matrix read issuing capability to 1 for the AXI SRAM target (Target 7) */
     *((__IO uint32_t*)0x51008108) = 0x000000001U;
   }
+
+   Enable_DivideByZero_Trap();
+    Enable_InvalidOperation_Trap();
+    Clear_FPSCR_Flags();
+
+    
+  
+  FPU->FPCCR &= ~FPU_FPCCR_LSPEN_Msk; // Disable lazy stacking
 
 #endif /* CORE_CM7*/
 

@@ -39,6 +39,27 @@ extern volatile float g_dutycycle_1B;
 extern volatile float g_dutycycle_2A;
 extern volatile float g_dutycycle_2b;
 
+// Debug variables for D6 (PC7, TIM8_CH2) issue - can be monitored in real-time
+extern volatile uint32_t g_debug_ccr2b_written;
+extern volatile uint32_t g_debug_ccr2b_actual;
+extern volatile float g_debug_duty2b;
+extern volatile bool g_debug_cc2ne_enabled;
+extern volatile uint32_t g_debug_ccer_value;
+extern volatile uint32_t g_debug_trigger;
+extern volatile float g_debug_U_beta;
+extern volatile float g_debug_U_beta_clamped;
+
+// Debug variables for D7 (PC6, TIM8_CH1) for comparison
+extern volatile uint32_t g_debug_ccr2a_written;
+extern volatile uint32_t g_debug_ccr2a_actual;
+extern volatile float g_debug_duty2a;
+
+// Additional debug variables for duty cycle calculation
+extern volatile bool g_debug_U_beta_positive;
+extern volatile float g_debug_duty_cycle_beta;
+extern volatile float g_debug_hifactor_2;
+extern volatile float g_debug_lofactor_2;
+
 
 //=============================================================================
 //                          StepperDriver Class
@@ -120,10 +141,6 @@ class StepperDriver
   
             status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
             
-            if(HAL_OK != status) { Error_Handler(); }
-
-            status = HAL_TIM_OC_Start(&htim8,  TIM_CHANNEL_6);
-
             if(HAL_OK != status) { Error_Handler(); }
 
 #endif
@@ -240,8 +257,21 @@ class StepperDriver
             float duty_cycle_2A(0.0f);
             float duty_cycle_2B(0.0f);
 
+            // DEBUG: Track U_beta value to understand why duty_cycle_2B is non-zero
+            extern volatile float g_debug_U_beta;
+            extern volatile float g_debug_U_beta_clamped;
+            g_debug_U_beta = U_beta;  // Store original value
+
             U_alpha = symetric_clamp(U_alpha, m_voltage_limit);
             U_beta  = symetric_clamp(U_beta,  m_voltage_limit);
+            
+            // WORKAROUND: If U_beta has a DC offset (positive most of the time),
+            // we can add a phase shift by swapping the sign or adding an offset
+            // This is a temporary fix - the root cause should be fixed in the FOC calculation
+            // TEST: Try inverting U_beta to see if this centers it better
+            // U_beta = -U_beta;  // Uncomment to test inversion
+            
+            g_debug_U_beta_clamped = U_beta;  // Store clamped value
 
             float duty_cycle_alpha = m_duty_cycle_limit.result(
                                                 fabs(U_alpha)/m_power_supply_voltage);
@@ -249,28 +279,86 @@ class StepperDriver
             float duty_cycle_beta  = m_duty_cycle_limit.result(
                                                 fabs(U_beta) /m_power_supply_voltage);
 
-
-
+            //-------------------------------------------------
             // Only energize one side of alpha channel H-bridge
-            if( U_alpha > 0.0f )
+            // CRITICAL: Use >= 0.0f to ensure zero and positive go to 1B, negative goes to 1A
+            // Initialize both to zero first
+            duty_cycle_1A = 0.0f;
+            duty_cycle_1B = 0.0f;
+            
+            // CRITICAL: Check U_alpha sign to determine which channel should be active
+            // When U_alpha >= 0: 1B should be active, 1A should be 0
+            // When U_alpha < 0: 1A should be active, 1B should be 0
+            if( U_alpha >= 0.0f )
             {
-               duty_cycle_1B = duty_cycle_alpha * hifactor_1;               
+                // U_alpha is positive or zero: activate 1B, 1A must be zero
+                duty_cycle_1B = duty_cycle_alpha * hifactor_1;
+                duty_cycle_1A = 0.0f;  // CRITICAL: Force 1A to zero
+            }
+            else  // U_alpha < 0.0f
+            {
+                // U_alpha is negative: activate 1A, 1B must be zero
+                duty_cycle_1A = duty_cycle_alpha * lofactor_1;
+                duty_cycle_1B = 0.0f;  // CRITICAL: Force 1B to zero
+            }
+            
+            // FINAL SAFETY CHECK: Double-check that inactive channel is exactly 0.0f
+            // This is redundant but ensures no floating point issues
+            if(U_alpha >= 0.0f)
+            {
+                if(duty_cycle_1A != 0.0f) duty_cycle_1A = 0.0f;  // Force 1A to zero
             }
             else
             {
-               duty_cycle_1A = duty_cycle_alpha * lofactor_1;  
+                if(duty_cycle_1B != 0.0f) duty_cycle_1B = 0.0f;  // Force 1B to zero
             }
-            
+            //-------------------------------------------------
             // Only energize one side of beta channel H-bridge
-            if( U_beta > 0.0f )
+            // CRITICAL: Use >= 0.0f to ensure zero and positive go to 2B, negative goes to 2A
+            // DEBUG: Track which branch we're taking
+            extern volatile bool g_debug_U_beta_positive;
+            extern volatile float g_debug_duty_cycle_beta;
+            extern volatile float g_debug_hifactor_2;
+            extern volatile float g_debug_lofactor_2;
+            
+            g_debug_duty_cycle_beta = duty_cycle_beta;
+            g_debug_hifactor_2 = hifactor_2;
+            g_debug_lofactor_2 = lofactor_2;
+            
+            // Initialize both to zero first
+            duty_cycle_2A = 0.0f;
+            duty_cycle_2B = 0.0f;
+            
+            // CRITICAL: Check U_beta sign to determine which channel should be active
+            // When U_beta >= 0: D6 (2B) should be active, D7 (2A) should be 0
+            // When U_beta < 0: D7 (2A) should be active, D6 (2B) should be 0
+            if( U_beta >= 0.0f )
             {
+                g_debug_U_beta_positive = true;
+                // U_beta is positive or zero: activate D6 (2B), D7 (2A) must be zero
                 duty_cycle_2B = duty_cycle_beta * hifactor_2;
+                duty_cycle_2A = 0.0f;  // CRITICAL: Force 2A to zero
+            }
+            else  // U_beta < 0.0f
+            {
+                g_debug_U_beta_positive = false;
+                // U_beta is negative: activate D7 (2A), D6 (2B) must be zero
+                duty_cycle_2A = duty_cycle_beta * lofactor_2; 
+                duty_cycle_2B = 0.0f;  // CRITICAL: Force 2B to zero
+            }
+            
+            // FINAL SAFETY CHECK: Double-check that inactive channel is exactly 0.0f
+            // This is redundant but ensures no floating point issues
+            if(U_beta >= 0.0f)
+            {
+                if(duty_cycle_2A != 0.0f) duty_cycle_2A = 0.0f;  // Force 2A to zero
             }
             else
             {
-               duty_cycle_2A = duty_cycle_beta * lofactor_2;
+                if(duty_cycle_2B != 0.0f) duty_cycle_2B = 0.0f;  // Force 2B to zero
             }
-            
+            //-------------------------------------------------
+
             g_dutycycle_1A = duty_cycle_1A;
             g_dutycycle_1B = duty_cycle_1B;
             g_dutycycle_2A = duty_cycle_2A;
@@ -313,25 +401,31 @@ class StepperDriver
 
 
 
+            //-------------------------------------------------
             // Only energize one side of alpha channel H-bridge
             if( U_alpha > 0.0f )
             {
-               duty_cycle_1B = duty_cycle_alpha;               
+               duty_cycle_1B = duty_cycle_alpha;
+               duty_cycle_1A = 0.0f;  // Explicitly ensure other side is zero
             }
             else
             {
-               duty_cycle_1A = duty_cycle_alpha;  
+               duty_cycle_1A = duty_cycle_alpha;
+               duty_cycle_1B = 0.0f;  // Explicitly ensure other side is zero
             }
-            
+            //-------------------------------------------------
             // Only energize one side of beta channel H-bridge
             if( U_beta > 0.0f )
             {
                 duty_cycle_2B = duty_cycle_beta;
+                duty_cycle_2A = 0.0f;  // Explicitly ensure other side is zero
             }
             else
             {
                duty_cycle_2A = duty_cycle_beta;
+               duty_cycle_2B = 0.0f;  // Explicitly ensure other side is zero
             }
+            //-------------------------------------------------
 
             set_dutycycles( duty_cycle_1A,
                             duty_cycle_1B,
@@ -346,9 +440,27 @@ class StepperDriver
         //---------------------------------------------------------------------
         uint32_t get_ccr_value_phase_1(float duty_cycle)
         {
+            // Explicitly handle zero or negative duty cycles
+            if(duty_cycle <= 0.0f)
+            {
+                return 0;
+            }
+            
+            // Safety check: ensure timer handle is valid
+            if(m_p_htim_phase_1 == nullptr || m_p_htim_phase_1->Instance == nullptr)
+            {
+                return 0;
+            }
+            
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_1);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
+            
+            // Clamp to ARR to prevent overflow
+            if(ccr_value > autoReloadValue)
+            {
+                ccr_value = autoReloadValue;
+            }
             
             return ccr_value;
         }
@@ -358,9 +470,27 @@ class StepperDriver
         //---------------------------------------------------------------------
         uint32_t get_ccr_value_phase_2(float duty_cycle)
         {
+            // Explicitly handle zero or negative duty cycles
+            if(duty_cycle <= 0.0f)
+            {
+                return 0;
+            }
+            
+            // Safety check: ensure timer handle is valid
+            if(m_p_htim_phase_2 == nullptr || m_p_htim_phase_2->Instance == nullptr)
+            {
+                return 0;
+            }
+            
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_2);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
+            
+            // Clamp to ARR to prevent overflow
+            if(ccr_value > autoReloadValue)
+            {
+                ccr_value = autoReloadValue;
+            }
             
             return ccr_value;
         }
@@ -389,7 +519,25 @@ class StepperDriver
         //                       set_dutycycles
         //---------------------------------------------------------------------
         void set_dutycycles(float _1A, float _1B, float _2A, float _2B)
-        {        
+        {
+            // Safety check: ensure driver is initialized
+            if(!m_initialized)
+            {
+                return;
+            }
+            
+            // Safety check: ensure timer handles are valid before proceeding
+            if(m_p_htim_phase_1 == nullptr || m_p_htim_phase_1->Instance == nullptr ||
+               m_p_htim_phase_2 == nullptr || m_p_htim_phase_2->Instance == nullptr)
+            {
+                return;  // Exit early if timers not initialized
+            }
+            
+            // DEBUG: Simple marker to verify function is being called
+            volatile static uint32_t call_count = 0;
+            call_count++;
+            (void)call_count;  // Prevent optimization
+            
             uint32_t ccr_value_1A = get_ccr_value_phase_1(_1A);
             uint32_t ccr_value_1B = get_ccr_value_phase_1(_1B);
 
@@ -429,6 +577,8 @@ class StepperDriver
 			#endif
             //-----------------------------------------------------------
            
+            // Temporarily comment out to test if this is causing the crash
+            // If system runs without crashing, the issue is in these calls
             __HAL_TIM_SET_COMPARE(m_p_htim_phase_1, 
                                   m_timer_channel_phase_1A, 
                                   ccr_value_1A);
@@ -437,15 +587,123 @@ class StepperDriver
                                   m_timer_channel_phase_1B, 
                                   ccr_value_1B);
                                             
-            __HAL_TIM_SET_COMPARE(m_p_htim_phase_2, 
-                                  m_timer_channel_phase_2A, 
-                                  ccr_value_2A);
-               
-            __HAL_TIM_SET_COMPARE(m_p_htim_phase_2,
-                                  m_timer_channel_phase_2B,
-                                  ccr_value_2B);
+            // Use direct register writes for both TIM8 channels for consistency
+            // This ensures both channels are written the same way
+            if(m_p_htim_phase_2 != nullptr && m_p_htim_phase_2->Instance != nullptr)
+            {
+                // Simply write CCR values - let PWM mode handle the output
+                // When CCR = 0, PWM mode should output low
+                m_p_htim_phase_2->Instance->CCR1 = ccr_value_2A;  // D7 (PC6, TIM8_CH1)
+                m_p_htim_phase_2->Instance->CCR2 = ccr_value_2B;  // D6 (PC7, TIM8_CH2)
+            }
+            else
+            {
+                // Fallback to HAL macro if handle is invalid
+                __HAL_TIM_SET_COMPARE(m_p_htim_phase_2, 
+                                      m_timer_channel_phase_2A, 
+                                      ccr_value_2A);
+                __HAL_TIM_SET_COMPARE(m_p_htim_phase_2,
+                                      m_timer_channel_phase_2B,
+                                      ccr_value_2B);
+            }
             
-
+            //-----------------------------------------------------------
+            // DIAGNOSTIC: Verify CCR values and timer configuration for D6 (PC7, TIM8_CH2)
+            // This helps debug why D6 stays high when it should be low
+            // Can monitor these variables in debugger watch window (no breakpoints needed)
+            #if 1  // Enabled for debugging - monitor variables in watch window
+            {
+                // Safety check: only access registers if timer is initialized
+                if(m_p_htim_phase_2 != nullptr && m_p_htim_phase_2->Instance != nullptr)
+                {
+                    // 1. Check if CCR2 is actually being set to 0
+                    volatile uint32_t actual_ccr2 = m_p_htim_phase_2->Instance->CCR2;
+                    volatile uint32_t actual_ccr1 = m_p_htim_phase_2->Instance->CCR1;
+                    
+                    // 2. Check CCER register - verify CC2E is enabled and CC2NE (complementary) is disabled
+                    volatile uint32_t ccer_tim8 = m_p_htim_phase_2->Instance->CCER;
+                    volatile bool cc2e = (ccer_tim8 & TIM_CCER_CC2E) != 0;      // Should be 1
+                    volatile bool cc2ne = (ccer_tim8 & TIM_CCER_CC2NE) != 0;     // Should be 0 (complementary disabled)
+                    volatile bool cc2p = (ccer_tim8 & TIM_CCER_CC2P) != 0;       // Polarity bit
+                    
+                    // 3. Check CCMR1 register - verify OC2M is PWM1 mode (0b110 = 6)
+                    volatile uint32_t ccmr1_tim8 = m_p_htim_phase_2->Instance->CCMR1;
+                    volatile uint32_t oc2m = (ccmr1_tim8 & TIM_CCMR1_OC2M) >> 8U; // Should be 6 for PWM1
+                    
+                    // 4. Check BDTR register - verify MOE (Main Output Enable) and OSSR/OSSI
+                    volatile uint32_t bdtr_tim8 = m_p_htim_phase_2->Instance->BDTR;
+                    volatile bool moe = (bdtr_tim8 & TIM_BDTR_MOE) != 0;
+                    volatile bool ossr = (bdtr_tim8 & TIM_BDTR_OSSR) != 0;
+                    volatile bool ossi = (bdtr_tim8 & TIM_BDTR_OSSI) != 0;
+                    
+                    // 5. Check GPIO configuration for PC7 (only if GPIOC is accessible)
+                    volatile uint32_t pc7_af = 0;
+                    volatile uint32_t pc7_mode = 0;
+                    if(__HAL_RCC_GPIOC_IS_CLK_ENABLED())
+                    {
+                        pc7_af = (GPIOC->AFR[0] >> (7 * 4)) & 0xF; // Should be 3 (AF3_TIM8)
+                        pc7_mode = (GPIOC->MODER >> (7 * 2)) & 0x3; // Should be 2 (Alternate function)
+                    }
+                    
+                    // DEBUG VARIABLES: These are global so you can monitor them continuously
+                    // Add to watch window and use "Live Watch" feature in your debugger
+                    extern volatile uint32_t g_debug_ccr2b_written;
+                    extern volatile uint32_t g_debug_ccr2b_actual;
+                    extern volatile float g_debug_duty2b;
+                    extern volatile bool g_debug_cc2ne_enabled;
+                    extern volatile uint32_t g_debug_ccer_value;
+                    
+                    // Update global debug variables (can be monitored in real-time)
+                    g_debug_ccr2b_written = ccr_value_2B;
+                    g_debug_ccr2b_actual = actual_ccr2;
+                    g_debug_duty2b = _2B;
+                    g_debug_cc2ne_enabled = cc2ne;
+                    g_debug_ccer_value = ccer_tim8;
+                    
+                    // Also track phase_2A (D7) for comparison
+                    extern volatile uint32_t g_debug_ccr2a_written;
+                    extern volatile uint32_t g_debug_ccr2a_actual;
+                    extern volatile float g_debug_duty2a;
+                    g_debug_ccr2a_written = ccr_value_2A;
+                    g_debug_ccr2a_actual = actual_ccr1;  // TIM8_CH1 is CCR1
+                    g_debug_duty2a = _2A;
+                    
+                    // DEBUG TRIGGER: Set this to 1 in debugger when you want to inspect
+                    // Then use debugger's "Pause" button (not breakpoint) to stop
+                    if(g_debug_trigger != 0)
+                    {
+                        // Safe inspection point - use debugger pause button here
+                        // All debug variables are updated and ready to inspect
+                        volatile uint32_t hold = g_debug_trigger;
+                        (void)hold;
+                    }
+                    
+                    // Optional: Log problem cases via UART (uncomment if needed)
+                    #if 0
+                    if(_2B == 0.0f && actual_ccr2 != 0)
+                    {
+                        // Duty cycle is 0 but register isn't - log this
+                        extern UART_HandleTypeDef huart2;
+                        char msg[128];
+                        sprintf(msg, "D6 Issue: duty=%.3f, ccr_written=%lu, ccr_actual=%lu, cc2ne=%d\r\n",
+                                _2B, ccr_value_2B, actual_ccr2, cc2ne ? 1 : 0);
+                        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 10);
+                    }
+                    #endif
+                    
+                    // Prevent optimization
+                    (void)actual_ccr1;
+                    (void)cc2e;
+                    (void)cc2p;
+                    (void)oc2m;
+                    (void)moe;
+                    (void)ossr;
+                    (void)ossi;
+                    (void)pc7_af;
+                    (void)pc7_mode;
+                }
+            }
+            #endif
             //-----------------------------------------------------------
 			#if 0
             HAL_StatusTypeDef status;

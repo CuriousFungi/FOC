@@ -94,9 +94,9 @@ extern uint32_t* get_timestamp_buffer_address(void);
 
 static StepperMotor stepper = StepperMotor(
                                      &hspi4,        //  sensor spi
-                                     100,            //  number of pole pairs
+                                     50,             //  number of pole pairs (was 100, corrected to 50)
                                      212.0f,  //1.45f,         //  phase resistance
-                                     1.0f,          // TODO: determine real  _KV, 
+                                     1.0f,          // TODO: determine real  _KV,
                                      3.2f,    //4.0f,          // mH inductance
                                      20.0f,         // voltage limit
                                      20.0f,         // power supply voltage limit L298N
@@ -132,18 +132,18 @@ winding_currents udpate_amperage(void)
 
     // 5A * 0.185V/A-->0.925V
     const float tweek(0.925f+.42f);
-        
+
     // Converts ADC value to voltage (0V to 5V)
-    float adc_to_voltage_a = (static_cast<float>(adc_dma_result[0]) / MAX_16BIT_ADC_COUNT) * V_REF; 
-    float adc_to_voltage_b = (static_cast<float>(adc_dma_result[1]) / MAX_16BIT_ADC_COUNT) * V_REF; 
-        
+    float adc_to_voltage_a = (static_cast<float>(adc_dma_result[0]) / MAX_16BIT_ADC_COUNT) * V_REF;
+    float adc_to_voltage_b = (static_cast<float>(adc_dma_result[1]) / MAX_16BIT_ADC_COUNT) * V_REF;
+
     // Center the voltage around 0A
     float centered_voltage_a = adc_to_voltage_a - ZERO_CURRENT_VOLTAGE_A - tweek;
     float centered_voltage_b = adc_to_voltage_b - ZERO_CURRENT_VOLTAGE_B - tweek;
 
     // Convert voltage to current in Amperes
-    float winding_amps_a = centered_voltage_a / ACS712_05B_MILLIVOLTS_PER_AMP; 
-    float winding_amps_b = centered_voltage_b / ACS712_05B_MILLIVOLTS_PER_AMP; 
+    float winding_amps_a = centered_voltage_a / ACS712_05B_MILLIVOLTS_PER_AMP;
+    float winding_amps_b = centered_voltage_b / ACS712_05B_MILLIVOLTS_PER_AMP;
 
     // Use clamping if needed to prevent unrealistic values
     winding_amps_a = fmaxf(fminf(winding_amps_a, 5.0f), -5.0f);
@@ -152,23 +152,23 @@ winding_currents udpate_amperage(void)
 
     g_adc_to_voltage_a_0_5       = adc_to_voltage_a;
     g_centered_voltage_a_absp925 =centered_voltage_a;
-    
+
     g_adc_to_voltage_b_0_5        = adc_to_voltage_b;
     g_centered_voltage_b_absp925  = centered_voltage_b;
-    
+
     return {
              .winding_amperage_a = winding_amps_a,
              .winding_amperage_b = winding_amps_b
            };
-            
+
 }
 volatile float g_cmd_rps(0.0f);
-static float rps = 0.0f;
+static float rps = 0.01f;
 void update_ramp(void)
 {
-     if (rps < 25.0f) // 50
+     if (rps < 30.0f) // 50
      {
-        rps += 0.01f;    //0.0002f;
+        rps += 0.1f;    //0.0002f;
         g_cmd_rps = rps;
         stepper.update_target_rad_per_sec(rps);
      }
@@ -178,7 +178,6 @@ void update_ramp(void)
 extern "C"
 void wrapper_control_loop_25us(void)
 {
-   // test();
     if(is_foc_initialized)
     {
         stepper.control_loop_25us();
@@ -215,22 +214,18 @@ void wrapper_sample_as5048_25us(void)
 
 }
 
-//volatile uint32_t utilization;
 extern "C"
 void foc_iteration(void)
 {
-
-    // PRP work on solution to invoke update_buffers
-    
-    if(!is_foc_initialized)
+    if(is_foc_initialized)
     {
-        rps = 0.0f;
-    }
-    else
-    {  
         winding_currents result = udpate_amperage();
         stepper.loopFOC(result.winding_amperage_a, result.winding_amperage_b);
         update_ramp();
+    }
+    else
+    {
+        rps = 0.0f;
     }
 }
 
@@ -238,7 +233,7 @@ void foc_iteration(void)
 void StepperMotor::process_encoder_data()
 {
     static uint32_t last_timestamp = 0;
-    
+
     if (read_ready)  // Ensure SPI read is complete
     {
         uint32_t current_timestamp = _micros();
@@ -270,7 +265,7 @@ void StepperMotor::process_encoder_data()
             last_angle = current_angle;
             last_timestamp = current_timestamp;
         }
-        
+
         read_ready = false;  // Reset read flag
     }
 }
@@ -288,8 +283,8 @@ extern "C"
 void complete_spi_conversion()
 {
     stepper.set_async_read_complete();
-    
-#if 0    
+
+#if 1
     const uint16_t ERROR_BIT(0x4000);
     // Ensure memory ordering with a Data Memory Barrier
     __DMB();
@@ -302,22 +297,22 @@ void complete_spi_conversion()
     volatile uint16_t received_value  = AS5048A::m_spi_as5048_rx_buff[0];
 
 
+    // CRITICAL: Always update buffers to ensure g_as5048_angle and g_as5048_velocity are updated
+    // Even if error bit is set, we still want to see the angle data
+    stepper.update_buffers(received_value & ~0xC000, micros());
+
     if (ERROR_BIT == (ERROR_BIT & received_value))
     {
-        // Trouble in paradise
+        // Trouble in paradise - but we still updated the buffers above
         __HAL_SPI_DISABLE(&hspi4);
-       
+
         stepper.spi_reset_in_progress();
         //stepper.set_async_read_complete();
-    }
-    else
-    {
-       stepper.update_buffers(received_value & ~0xC000, micros());
     }
 
     // Re-enable timer interrupt
     // TBV remove
-    //__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE); 
+    //__HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
 #endif
 }
 
@@ -340,49 +335,21 @@ void cpp_main(void)
   enableCycleCounter();
 
   // Initialize the DMA conversion
- volatile HAL_StatusTypeDef status = HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
+ //volatile HAL_StatusTypeDef status = HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_dma_result , adc_channel_count);
 
+  is_foc_initialized = stepper.initFOC();
 
-#if 0  
-  std::vector<float> speeds;
-  for (float i = 0.0f; i <= 8.0f; i += 0.1f)
-  {
-     speeds.push_back(i);
-  }
-  //int num_speeds = speeds.size();
-#endif
-  
-  //int speed_index = 0;
-  bool success = stepper.initFOC();
-  
-  is_foc_initialized = true; //success;
-
-
-  //unsigned long prev_us = micros();
- // const uint32_t MICROSECONDS_PER_ITERATION(25);
-//  const uint32_t MICROSECONDS_PER_SECOND(1000000);
-  //const uint32_t ITERATIONS_PER_SECOND(MICROSECONDS_PER_SECOND/MICROSECONDS_PER_ITERATION);
-  
-  // https://github.com/RobTillaart/ACS712
-  //const float V_REF(5.0f);
-  //const float AMPS_PER_VOLT(2.0f); // per IBT2
- // const float AMPS_PER_VOLT(5.41f); // per ACS712
-  //const float FULL_SCALE_ADC(V_REF * AMPS_PER_VOLT);
-
-  //const float LSB_VALUE(FULL_SCALE_ADC / static_cast<float>(0xFFF));
-
-  //const float LSB_VALUE(
-  //                     ( 1000.0f * ((1000.0f*V_REF) / static_cast<float>(0xFFFF)))
-  //                    / (185.0f));
-
-  ElapsedTime elapsed_microseconds;
+  uint32_t last_foc_time = micros();
 
   while (1)
   {
-      if(elapsed_microseconds.get() >= MICROSECONDS_PER_ITERATION)
-      {   
+      uint32_t current_time = micros();
+      uint32_t elapsed = current_time - last_foc_time;
+
+      if(elapsed >= MICROSECONDS_PER_ITERATION)
+      {
           foc_iteration();
+          last_foc_time = current_time;
       }
   }
 }
-

@@ -39,8 +39,37 @@ __attribute__((weak)) float _sin(float a)
 // precision +-0.005
 // it has to receive an angle in between 0 and 2PI
 __attribute__((weak)) float _cos(float a){
+  // Ensure input is in [0, 2π) range to prevent boundary issues
+  // Normalize if needed (defensive check for floating point errors)
+  if(a < 0.0f || a >= _2PI)
+  {
+      // Use fmodf directly (safe_fmodf is defined later, but fmodf is standard)
+      float normalized = fmodf(a, _2PI);
+      a = normalized >= 0.0f ? normalized : (normalized + _2PI);
+  }
+  
+  // CRITICAL FIX: cos(a) = sin(a + π/2), but we need to ensure proper wrapping
+  // The _sin lookup table expects [0, 2π), so we must wrap correctly
+  // cos(0) = 1 = sin(π/2)
+  // cos(π/2) = 0 = sin(π)
+  // cos(π) = -1 = sin(3π/2)
+  // cos(3π/2) = 0 = sin(2π) = sin(0)
   float a_sin = a + _PI_2;
-  a_sin = a_sin > _2PI ? a_sin - _2PI : a_sin;
+  
+  // Wrap to [0, 2π) range - this is critical for _sin to work correctly
+  // Since a is in [0, 2π), a_sin will be in [π/2, 2π + π/2)
+  // We need to wrap values >= 2π back to [0, 2π)
+  if(a_sin >= _2PI)
+  {
+      a_sin = a_sin - _2PI;
+  }
+  // Defensive check for negative (shouldn't happen, but be safe)
+  if(a_sin < 0.0f)
+  {
+      a_sin = a_sin + _2PI;
+  }
+  
+  // Now a_sin is guaranteed to be in [0, 2π), so _sin should work correctly
   return _sin(a_sin);
 }
 
