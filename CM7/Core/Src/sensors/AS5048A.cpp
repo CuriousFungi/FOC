@@ -22,6 +22,14 @@ volatile float g_as5048_velocity(0.0f);
 volatile float g_as5048_angle(0.0f);  // Forward declaration - defined later in file
 volatile uint32_t g_as5048_update_count(0);  // Debug: count how many times update_buffers is called
 
+// Kalman filter debug variables
+volatile float g_kalman_position(0.0f);         // Kalman filtered position (rad)
+volatile float g_kalman_velocity(0.0f);         // Kalman filtered velocity (rad/s)
+volatile float g_kalman_position_variance(0.0f); // Position uncertainty
+volatile float g_kalman_velocity_variance(0.0f); // Velocity uncertainty
+volatile float g_velocity_raw(0.0f);            // Raw velocity for comparison
+volatile float g_kalman_dt(0.0f);               // Delta time for Kalman updates
+
 extern volatile float g_experimental_velocity;
 
 extern bool is_foc_initialized;
@@ -194,6 +202,7 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi)
 ,   m_prev_velocity_timestamp_us(0)
 
 ,   m_prev_microseconds(0)
+,   m_kalman_filter(1e-6f, 1e-4f, 1e-3f)  // Initialize Kalman filter with tuned noise parameters
 ,   m_invert_output(false)
 //,   m_spi_as5048_rx_buff(0)
 //,   spi_current_index(0)
@@ -545,27 +554,18 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
 {    
   m_spi_async_read_complete = true;
   g_as5048_update_count++;  // Debug: increment counter to verify function is called
-#if 0
-    // Update the current position in the circular buffer
-    spi_angle_buffer[    spi_index_curr] = new_angle;
-    spi_timestamp_buffer[spi_index_curr] = new_timestamp;
-
-    // Move the index forward (circularly)
-    spi_index_prev = spi_index_curr;
-    spi_index_curr = (spi_index_curr + 1) % SPI_BUFFER_SIZE;
-
-    // Mark that data is ready for processing
-    //m_spi_async_read_complete = true;
-#endif    
+  
     g_as5048_u16_angle = new_angle;
     
-    // CRITICAL: Also update the float angle directly so STM32CubeMonitor can see it
     // Convert 14-bit angle (0-16383) to radians (0-2π)
-    float current_angle_radians = (static_cast<float>(new_angle) * TWO_PI) / AS5048_MAX;
-    g_as5048_angle = current_angle_radians;
+    float measured_angle_radians = (static_cast<float>(new_angle) * TWO_PI) / AS5048_MAX;
+    g_as5048_angle = measured_angle_radians;
     
-    // CRITICAL: Calculate velocity from angle change over time
-    // Only calculate if we have a previous sample
+    // =======================================================================
+    // KALMAN FILTER BASED VELOCITY ESTIMATION
+    // =======================================================================
+    
+    // Calculate time step for Kalman filter
     if (m_prev_angle_timestamp_us > 0)
     {
         // Calculate time difference (handle microsecond rollover)
@@ -581,38 +581,48 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
             delta_time_us = (0xFFFFFFFFU - prev_timestamp) + new_timestamp + 1;
         }
         
-        // CRITICAL: Only calculate velocity if time delta is large enough to avoid noise
-        // SPI updates can be very frequent (e.g., 25us), causing large velocity spikes
-        // Minimum time delta: 100 microseconds (0.1ms) = 10kHz max update rate for velocity
-        const uint32_t MIN_DELTA_TIME_US = 100;
-        if (delta_time_us >= MIN_DELTA_TIME_US)
+        // Only update Kalman filter if reasonable time has elapsed
+        const uint32_t MIN_DELTA_TIME_US = 10;  // 10us minimum (allow faster updates than old method)
+        const uint32_t MAX_DELTA_TIME_US = 10000;  // 10ms maximum (guard against stalls)
+        
+        if (delta_time_us >= MIN_DELTA_TIME_US && delta_time_us <= MAX_DELTA_TIME_US)
         {
-            // Calculate angle difference (handle wrap-around at 0/2π)
-            float delta_angle = current_angle_radians - m_prev_angle_radians;
-            if (delta_angle > M_PI)
-            {
-                delta_angle -= TWO_PI;  // Handle wrap-around
-            }
-            else if (delta_angle < -M_PI)
-            {
-                delta_angle += TWO_PI;  // Handle wrap-around
-            }
+            float dt = static_cast<float>(delta_time_us) * 1e-6f;
+            g_kalman_dt = dt;  // Debug output
             
-            // Calculate velocity in rad/s
-            float delta_time_seconds = static_cast<float>(delta_time_us) * 1e-6f;
-            float velocity_rad_per_sec = delta_angle / delta_time_seconds;
+            // Kalman filter predict step
+            m_kalman_filter.predict(dt);
             
-            // CRITICAL: Apply exponential filtering to smooth velocity and reduce noise
-            // Filter coefficient: 0.1 = heavy filtering (smooth), 1.0 = no filtering (raw)
-            const float VELOCITY_FILTER_ALPHA = 0.3f;  // Moderate filtering
-            g_as5048_velocity = (VELOCITY_FILTER_ALPHA * velocity_rad_per_sec) + 
-                                ((1.0f - VELOCITY_FILTER_ALPHA) * g_as5048_velocity);
+            // Kalman filter update step with new measurement
+            m_kalman_filter.update(measured_angle_radians);
+            
+            // Get filtered estimates
+            g_kalman_position = m_kalman_filter.get_position();
+            g_kalman_velocity = m_kalman_filter.get_velocity();
+            g_kalman_position_variance = m_kalman_filter.get_position_variance();
+            g_kalman_velocity_variance = m_kalman_filter.get_velocity_variance();
+            
+            // Use Kalman velocity as the primary velocity estimate
+            g_as5048_velocity = g_kalman_velocity;
+            
+            // Calculate raw velocity for comparison (debug only)
+            float delta_angle = measured_angle_radians - m_prev_angle_radians;
+            if (delta_angle > M_PI) delta_angle -= TWO_PI;
+            else if (delta_angle < -M_PI) delta_angle += TWO_PI;
+            g_velocity_raw = delta_angle / dt;
         }
-        // If delta_time_us < MIN_DELTA_TIME_US, keep previous velocity (don't update)
+    }
+    else
+    {
+        // First sample - initialize Kalman filter
+        m_kalman_filter.initialize(measured_angle_radians);
+        g_kalman_position = measured_angle_radians;
+        g_kalman_velocity = 0.0f;
+        g_as5048_velocity = 0.0f;
     }
     
-    // Update previous values for next calculation
-    m_prev_angle_radians = current_angle_radians;
+    // Update previous values for next iteration
+    m_prev_angle_radians = measured_angle_radians;
     m_prev_angle_timestamp_us = static_cast<long>(new_timestamp);
 }
 

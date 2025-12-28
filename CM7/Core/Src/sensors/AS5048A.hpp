@@ -3,6 +3,7 @@
 
 
 #include <cstdint>
+#include "KalmanFilter.hpp"
 
 
 #ifdef __cplusplus
@@ -184,6 +185,9 @@ class AS5048A
     long               m_prev_velocity_timestamp_us; // last velocity calculation timestamp
 
     uint32_t           m_prev_microseconds;
+    
+    // Kalman filter for optimal velocity estimation
+    KalmanFilter2D     m_kalman_filter;
     bool               m_invert_output;
 
    //uint8_t            spi_current_index;  // Index to track the circular buffer
