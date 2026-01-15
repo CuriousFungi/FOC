@@ -132,7 +132,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    
+
     /**ADC1 GPIO Configuration
     PA6     ------> ADC1_INP3
     PB1     ------> ADC1_INP5
@@ -200,7 +200,7 @@ void HAL_DAC_MspInit(DAC_HandleTypeDef* hdac)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   if(hdac->Instance==DAC1)
   {
-    // Peripheral clock enable 
+    // Peripheral clock enable
     __HAL_RCC_DAC12_CLK_ENABLE();
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -247,17 +247,17 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  
- 
+
+
   //=============================================================
   //                           SPI4
   //=============================================================
   if(hspi->Instance==SPI4)
     {
     /* USER CODE BEGIN SPI4_MspInit 0 */
-    
+
     /* USER CODE END SPI4_MspInit 0 */
-    
+
     /** Initializes the peripherals clock
     */
       PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SPI4;
@@ -266,10 +266,10 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
       {
         Error_Handler();
       }
-    
+
       /* Peripheral clock enable */
       __HAL_RCC_SPI4_CLK_ENABLE();
-    
+
       __HAL_RCC_GPIOE_CLK_ENABLE();
       /**SPI4 GPIO Configuration
       PE2     ------> SPI4_SCK
@@ -283,7 +283,24 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
       GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
       GPIO_InitStruct.Alternate = GPIO_AF5_SPI4;
       HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-    
+#if 0
+      // Configure PE2, PE5, PE6 (SCK, MISO, MOSI) without pullups
+      GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_5|GPIO_PIN_6;
+      GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+      GPIO_InitStruct.Pull = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+      GPIO_InitStruct.Alternate = GPIO_AF5_SPI4;
+      HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+      // Configure PE4 (NSS) with pullup
+      GPIO_InitStruct.Pin = GPIO_PIN_4;
+      GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+      GPIO_InitStruct.Pull = GPIO_PULLUP;  // Only PE4 gets pullup
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+      GPIO_InitStruct.Alternate = GPIO_AF5_SPI4;
+      HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+#endif
+
       /* SPI4 DMA Init */
       /* SPI4_RX Init */
       hdma_spi4_rx.Instance                 = DMA1_Stream3;
@@ -311,15 +328,15 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
       hdma_spi4_rx.StreamBaseAddress        = DMA1_BASE;
       hdma_spi4_rx.StreamIndex              = 3;
       hdma_spi4_rx.DMAmuxChannel            = DMAMUX1_Channel3;
-      DMAMUX1_Channel3->CCR                 = (83 << DMAMUX_CxCR_DMAREQ_ID_Pos);  
+      DMAMUX1_Channel3->CCR                 = (83 << DMAMUX_CxCR_DMAREQ_ID_Pos);
 
       if (HAL_DMA_Init(&hdma_spi4_rx) != HAL_OK)
       {
         Error_Handler();
       }
-    
+
       __HAL_LINKDMA(hspi,hdmarx,hdma_spi4_rx);
-    
+
       /* SPI4_TX Init */
       hdma_spi4_tx.Instance                 = DMA1_Stream4;
       hdma_spi4_tx.Init.Request             = DMA_REQUEST_SPI4_TX;
@@ -341,20 +358,20 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
       hdma_spi4_tx.XferM1HalfCpltCallback   = NULL;
       hdma_spi4_tx.XferErrorCallback        = NULL;  //HAL_SPI_ErrorCallback;
       hdma_spi4_tx.XferAbortCallback        = NULL;  // HAL_DMA_Abort;
-  
+
       hdma_spi4_tx.StreamBaseAddress        = DMA1_BASE;
       hdma_spi4_tx.StreamIndex              = 4;
       hdma_spi4_tx.DMAmuxChannel            = DMAMUX1_Channel4;
-      
-      DMAMUX1_Channel4->CCR                 = (84 << DMAMUX_CxCR_DMAREQ_ID_Pos);  
+
+      DMAMUX1_Channel4->CCR                 = (84 << DMAMUX_CxCR_DMAREQ_ID_Pos);
 
       if (HAL_DMA_Init(&hdma_spi4_tx) != HAL_OK)
       {
         Error_Handler();
       }
-    
+
       __HAL_LINKDMA(hspi,hdmatx,hdma_spi4_tx);
-    
+
       /* SPI4 interrupt Init */
       HAL_NVIC_SetPriority(SPI4_IRQn, IRQ_PRIORITY_SPI, 0);
       HAL_NVIC_EnableIRQ(  SPI4_IRQn);
@@ -362,7 +379,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
 
       HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, IRQ_PRIORITY_DMA_SPI_RX, 0);
       HAL_NVIC_EnableIRQ(  DMA1_Stream3_IRQn);
-    
+
       HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, IRQ_PRIORITY_DMA_SPI_TX, 0);
       HAL_NVIC_EnableIRQ(  DMA1_Stream4_IRQn);
     }
@@ -373,7 +390,7 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
 //-----------------------------------------------------------------------------
 void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
 {
-#if 0    
+#if 0
   //=============================================================
   //                           SPI2
   //=============================================================
@@ -399,14 +416,14 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
     // SPI2 interrupt DeInit
     HAL_NVIC_DisableIRQ(SPI2_IRQn);
   }
-  else 
+  else
 #endif
   //=============================================================
   //                           SPI4
   //=============================================================
   if(hspi->Instance==SPI4)
   {
-    // Peripheral clock disable 
+    // Peripheral clock disable
     __HAL_RCC_SPI4_CLK_DISABLE();
 
     /**SPI4 GPIO Configuration
@@ -417,7 +434,7 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
     */
     HAL_GPIO_DeInit(GPIOE, GPIO_PIN_2|GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6);
 
-    // SPI4 DMA DeInit 
+    // SPI4 DMA DeInit
     HAL_DMA_DeInit(hspi->hdmarx);
     HAL_DMA_DeInit(hspi->hdmatx);
 
@@ -435,21 +452,21 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
   {
     // Peripheral clock enable
     __HAL_RCC_TIM1_CLK_ENABLE();
-    
+
     // TIM1 interrupt Init
     HAL_NVIC_SetPriority(TIM1_UP_IRQn, IRQ_PRIORITY_TIM1, 0);
     HAL_NVIC_EnableIRQ(TIM1_UP_IRQn);
   }
   else if(htim_base->Instance==TIM2)
   {
-    // Peripheral clock enable 
+    // Peripheral clock enable
     __HAL_RCC_TIM2_CLK_ENABLE();
   }
   else if(htim_base->Instance==TIM8)
   {
     // Peripheral clock enable
     __HAL_RCC_TIM8_CLK_ENABLE();
-    
+
     // TIM8 interrupt Init
     HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, IRQ_PRIORITY_TIM8, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
@@ -516,7 +533,7 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* htim_base)
     // Peripheral clock disable
     __HAL_RCC_TIM1_CLK_DISABLE();
 
-    // TIM1 interrupt DeInit 
+    // TIM1 interrupt DeInit
     HAL_NVIC_DisableIRQ(TIM1_UP_IRQn);
   }
   else if(htim_base->Instance==TIM2)
@@ -526,7 +543,7 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* htim_base)
   }
   else if(htim_base->Instance==TIM8)
   {
-    // Peripheral clock disable 
+    // Peripheral clock disable
     __HAL_RCC_TIM8_CLK_DISABLE();
 
     // TIM8 interrupt DeInit
@@ -551,7 +568,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
       Error_Handler();
     }
 
-    // Peripheral clock enable 
+    // Peripheral clock enable
     __HAL_RCC_USART2_CLK_ENABLE();
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -584,7 +601,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
       Error_Handler();
     }
 
-    // Peripheral clock enable 
+    // Peripheral clock enable
     __HAL_RCC_USART3_CLK_ENABLE();
 
     __HAL_RCC_GPIOD_CLK_ENABLE();

@@ -1,0 +1,283 @@
+================================================================================
+TEST PLAN AFTER ANGLE FIX - Quick Verification
+================================================================================
+
+CHANGE APPLIED: get_electric_angle_radians() now uses g_as5048_angle directly
+                instead of calling broken fetch_radians() path
+
+EXPECTED: All angle variables should now update with sawtooth patterns
+          Motor should run smoothly with low current
+
+================================================================================
+STEP 1: REBUILD AND FLASH (2 minutes)
+================================================================================
+
+1. Clean build:
+   ☐ Right-click project → Clean
+   ☐ Build project
+   ☐ Verify 0 errors, 0 warnings
+
+2. Flash to board:
+   ☐ Connect ST-Link
+   ☐ Flash firmware
+   ☐ Verify successful flash
+
+================================================================================
+STEP 2: QUICK VISUAL TEST (30 seconds)
+================================================================================
+
+Start motor and observe:
+
+☐ Motor runs SMOOTHLY (no vibration)
+☐ Motor is QUIET (minimal noise)
+☐ No overheating (feel motor body - should be warm, not hot)
+☐ Motor responds to speed commands
+
+IF motor still rough → Continue to Step 3 for detailed diagnosis
+IF motor smooth → SUCCESS! Continue to Step 4 for verification
+
+================================================================================
+STEP 3: VERIFY ANGLES UPDATE (2 minutes)
+================================================================================
+
+Open STM32CubeMonitor with these variables:
+
+CRITICAL ANGLES:
+☐ g_as5048_angle                      → Should show SAWTOOTH (0→2π, slow)
+☐ g_encoder_mech_angle_raw            → Should show SAWTOOTH (MATCHES ABOVE!)
+☐ g_encoder_elec_angle_raw            → Should show SAWTOOTH (0→2π, FAST 50×)
+☐ g_encoder_elec_after_offset         → Should show SAWTOOTH (0→2π, FAST 50×)
+☐ g_cached_encoder_angle              → Should show SAWTOOTH (0→2π, FAST 50×)
+
+BLENDING ANGLES:
+☐ g_closed_loop_elec_before_blend     → Should show SAWTOOTH
+☐ g_open_loop_elec_before_blend       → Should show SAWTOOTH
+☐ g_blended_angle_after_rate_limit    → Should show SAWTOOTH
+
+RUN MOTOR FOR 5 SECONDS, THEN CHECK:
+
+SUCCESS CRITERIA:
+✓ ALL angles show sawtooth patterns (NOT flat lines!)
+✓ g_encoder_mech_angle_raw MATCHES g_as5048_angle
+✓ Electrical angles wrap 50× per mechanical rotation
+
+FAILURE INDICATORS:
+✗ Any angle still FLAT/CONSTANT
+✗ g_encoder_mech_angle_raw still stuck at 0.0
+✗ Angles don't match between paths
+
+IF ALL ANGLES UPDATE → Fix worked! Continue to Step 4
+IF ANGLES STILL STUCK → See troubleshooting section below
+
+================================================================================
+STEP 4: VERIFY MOTOR PERFORMANCE (2 minutes)
+================================================================================
+
+Test motor at different speeds:
+
+TEST A: Low Speed (5 rad/s)
+─────────────────────────────
+☐ Motor rotates smoothly
+☐ No cogging or stuttering
+☐ Current draw < 1A
+☐ Blend factor should be 0.0 (pure open-loop)
+
+TEST B: Medium Speed (15 rad/s)
+─────────────────────────────
+☐ Motor accelerates smoothly from low speed
+☐ No vibration or noise
+☐ Current draw < 1.5A
+☐ Blend factor should be 0.0→1.0 (transitioning)
+
+TEST C: High Speed (25 rad/s)
+─────────────────────────────
+☐ Motor reaches commanded speed
+☐ Quiet, smooth operation
+☐ Current draw < 2A
+☐ Blend factor should be 1.0 (pure closed-loop)
+
+COMPARE TO BEFORE:
+☐ Motor runs FASTER than before (less cogging)
+☐ Motor is QUIETER than before
+☐ Current draw is LOWER than before
+☐ Matches your previous "good runs"
+
+================================================================================
+STEP 5: CHECK DUTY CYCLES (1 minute)
+================================================================================
+
+Monitor duty cycle patterns:
+
+☐ g_dutycycle_1A    → Clean sinusoid
+☐ g_dutycycle_1B    → Clean sinusoid (90° phase shift from 1A)
+☐ g_dutycycle_2A    → Clean sinusoid
+☐ g_dutycycle_2b    → Clean sinusoid (90° phase shift from 2A)
+
+SUCCESS: All duty cycles show smooth sinusoidal patterns
+         No glitches, no flat spots, no distortion
+
+BEFORE FIX: Duty cycles were distorted due to fixed commutation angle
+AFTER FIX:  Should be clean sinusoids
+
+================================================================================
+STEP 6: CHECK BLEND TRANSITION (Optional - 1 minute)
+================================================================================
+
+Run complete startup sequence to observe blending:
+
+☐ g_hybrid_blend_factor starts at 0.0
+☐ Smoothly ramps 0.0 → 1.0 as speed increases
+☐ Reaches 1.0 at high speed
+☐ No oscillations or jumps
+
+☐ Motor smooth throughout entire transition
+☐ No audible "thunk" or vibration at blend transition
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+BEFORE FIX (Broken State):
+✗ g_encoder_mech_angle_raw = FLAT at 0.0
+✗ All electrical angles = FLAT
+✗ Motor rough, high current
+✗ Duty cycles distorted
+
+AFTER FIX (Expected State):
+✓ g_encoder_mech_angle_raw = SAWTOOTH (matches g_as5048_angle)
+✓ All electrical angles = SAWTOOTH (50× rate)
+✓ Motor smooth, low current
+✓ Duty cycles clean sinusoids
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+PROBLEM: Angles still stuck at 0.0 after fix
+─────────────────────────────────────────────────────────────────────
+POSSIBLE CAUSES:
+1. Fix not actually applied (check code)
+2. Build didn't include changes (clean rebuild)
+3. Old firmware still on board (re-flash)
+
+ACTIONS:
+☐ Verify lines ~3530-3540 in StepperMotor.cpp show new code
+☐ Clean build and rebuild completely
+☐ Re-flash firmware
+☐ Power cycle board
+
+
+PROBLEM: g_encoder_mech_angle_raw now updates but motor still rough
+─────────────────────────────────────────────────────────────────────
+POSSIBLE CAUSES:
+1. Calibration offset wrong
+2. Direction inversion incorrect
+3. Different issue (not the angle stuck bug)
+
+ACTIONS:
+☐ Check g_calibration_offset_elec value
+☐ Re-run alignment/calibration
+☐ Check g_align_direction_inversion flag
+☐ Verify pole_pairs = 50
+
+
+PROBLEM: Some angles update, others don't
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: Pipeline breaks at a specific stage
+
+FIND THE BREAK POINT:
+☐ g_encoder_mech_angle_raw updates? → YES/NO
+☐ g_encoder_elec_angle_raw updates? → YES/NO
+☐ g_encoder_elec_after_offset updates? → YES/NO
+☐ g_cached_encoder_angle updates? → YES/NO
+
+First variable that's stuck = where pipeline breaks
+
+
+PROBLEM: Motor runs backwards
+─────────────────────────────────────────────────────────────────────
+CAUSE: Direction inversion flag may be wrong
+
+ACTIONS:
+☐ Check m_invert_output flag during alignment
+☐ Re-run calibration to determine correct direction
+☐ Manually toggle direction if needed
+
+================================================================================
+SUCCESS CRITERIA SUMMARY
+================================================================================
+
+VISUAL/AUDIBLE:
+✓ Motor runs smoothly, quietly
+✓ No vibration, cogging, or stuttering
+✓ Responds quickly to speed commands
+
+ELECTRICAL:
+✓ Low current draw (< 2A at moderate speeds)
+✓ Clean sinusoidal duty cycle patterns
+✓ All angle variables show sawtooth patterns
+
+PERFORMANCE:
+✓ Matches your previous "good runs"
+✓ Fast acceleration
+✓ Stable speed holding
+✓ Low power consumption
+
+IF ALL CRITERIA MET: FIX SUCCESSFUL! ✓
+
+================================================================================
+NEXT STEPS AFTER VERIFICATION
+================================================================================
+
+Once fix verified working:
+
+1. DOCUMENT BASELINE PERFORMANCE:
+   ☐ Record current draw at various speeds
+   ☐ Save angle waveform screenshots
+   ☐ Note any remaining issues
+
+2. TUNE CONTROL PARAMETERS (if needed):
+   ☐ Adjust blend thresholds (currently 5-10 rad/s)
+   ☐ Tune PID gains for velocity control
+   ☐ Optimize feedforward terms
+
+3. TEST EDGE CASES:
+   ☐ Very low speed operation (< 1 rad/s)
+   ☐ Rapid acceleration/deceleration
+   ☐ Load changes (if applicable)
+   ☐ Long-term stability (run for minutes)
+
+4. CONSIDER CLEANUP:
+   ☐ Remove unused debug variables
+   ☐ Add comments explaining the fix
+   ☐ Update documentation
+
+================================================================================
+ESTIMATED TIME
+================================================================================
+
+Rebuild/flash:           2 minutes
+Visual test:             30 seconds
+Angle verification:      2 minutes
+Performance test:        2 minutes
+Duty cycle check:        1 minute
+─────────────────────────────────────
+TOTAL:                   ~8 minutes
+
+================================================================================
+CONTACT FOR ISSUES
+================================================================================
+
+If fix doesn't work or new issues appear, provide:
+
+1. Screenshots of angle variables (5 second capture)
+2. Motor behavior description (smooth/rough/vibrating/etc)
+3. Current draw measurements
+4. Any error messages or warnings
+
+Most likely this fix will resolve the issue completely since root cause
+was clearly identified (two sensor read paths, one failing).
+
+Good luck! 🎯
+
+================================================================================

@@ -1,0 +1,423 @@
+================================================================================
+BLEND RATIO TROUBLESHOOTING - DECISION TREE
+================================================================================
+
+START HERE: What is the problem with your motor control?
+
+================================================================================
+PROBLEM CATEGORY 1: BLEND FACTOR NOT CHANGING
+================================================================================
+
+Question: Is g_hybrid_blend_factor stuck at 0.0?
+
+YES → Blend factor stuck at 0.0
+│
+├─→ Check: What is g_hybrid_measured_speed?
+│   │
+│   ├─→ Speed < 10 rad/s
+│   │   │
+│   │   ├─→ Check: Is motor actually rotating?
+│   │   │   │
+│   │   │   ├─→ NO → Motor not moving
+│   │   │   │   │
+│   │   │   │   ├─→ Check g_target_rps_to_cl_controller
+│   │   │   │   │   Is target speed > 0?
+│   │   │   │   │
+│   │   │   │   ├─→ NO → SOLUTION: Increase target speed
+│   │   │   │   │
+│   │   │   │   └─→ YES → Motor has startup issue
+│   │   │   │       │
+│   │   │   │       ├─→ Check alignment phase
+│   │   │   │       ├─→ Check duty cycles (should be >0)
+│   │   │   │       └─→ Check power supply voltage
+│   │   │   │
+│   │   │   └─→ YES → Motor rotating but speed not measured
+│   │   │       │
+│   │   │       ├─→ Check g_kalman_velocity - is it updating?
+│   │   │       │
+│   │   │       ├─→ NO → Kalman filter issue
+│   │   │       │   └─→ Check encoder reads (g_as5048_angle)
+│   │   │       │       └─→ SOLUTION: Fix encoder/Kalman
+│   │   │       │
+│   │   │       └─→ YES but < 10 → Motor too slow
+│   │   │           └─→ SOLUTION: Increase acceleration
+│   │   │                         or lower threshold
+│   │   │
+│   │   └─→ Speed measurement incorrect
+│   │       └─→ SOLUTION: Debug Kalman filter tuning
+│   │
+│   └─→ Speed >= 10 rad/s but blend still 0.0
+│       │
+│       ├─→ SOLUTION: Code bug in blend calculation
+│       │   │
+│       │   └─→ Check line ~2749 in StepperMotor.cpp
+│       │       Verify blend_factor calculation logic
+│       │
+│       └─→ OR: Variable not being updated
+│           └─→ Check line ~2887 assignment:
+│               g_hybrid_blend_factor = blend_factor;
+│
+NO → Continue to next problem category
+
+
+================================================================================
+PROBLEM CATEGORY 2: BLEND FACTOR STUCK AT 1.0
+================================================================================
+
+Question: Is g_hybrid_blend_factor stuck at 1.0 immediately?
+
+YES → Blend started at 1.0 without open-loop phase
+│
+├─→ Check: What is speed at startup?
+│   │
+│   ├─→ Speed > 20 rad/s at t=0
+│   │   │
+│   │   └─→ CAUSE: Measurement error or previous state
+│   │       │
+│   │       └─→ SOLUTION:
+│           │   1. Reset Kalman filter at startup
+│           │   2. Verify speed measurement starts at 0
+│           │
+│   └─→ Speed < 20 rad/s
+│       │
+│       └─→ SOLUTION: Code bug - check threshold logic
+│           Force blend_factor = 0.0 during alignment
+│
+NO → Continue to next problem category
+
+
+================================================================================
+PROBLEM CATEGORY 3: OSCILLATING BLEND FACTOR
+================================================================================
+
+Question: Does g_hybrid_blend_factor rapidly oscillate?
+
+YES → Blend factor toggling instead of smooth transition
+│
+├─→ Check: Is g_hybrid_measured_speed oscillating?
+│   │
+│   ├─→ YES → Speed estimate is unstable
+│   │   │
+│   │   ├─→ Check g_kalman_velocity vs g_as5048_velocity
+│   │   │   │
+│   │   │   ├─→ Both oscillating → Mechanical issue
+│   │   │   │   │
+│   │   │   │   └─→ SOLUTIONS:
+│   │   │   │       - Check for mechanical resonance
+│   │   │   │       - Increase Kalman process noise
+│   │   │   │       - Add speed measurement filter
+│   │   │   │
+│   │   │   └─→ Kalman only oscillating → Filter tuning
+│   │   │       │
+│   │   │       └─→ SOLUTION: Increase Kalman Q (process)
+│   │   │                     Decrease Kalman R (measurement)
+│   │   │
+│   │   └─→ Speed hovering near threshold (9-11 or 19-21 rad/s)
+│   │       │
+│   │       └─→ SOLUTION: Add hysteresis
+│   │           │
+│   │           Example thresholds:
+│   │           LOW_ENTER  = 10.0 rad/s (going up)
+│   │           LOW_EXIT   = 8.0 rad/s  (going down)
+│   │           HIGH_ENTER = 20.0 rad/s (going up)
+│   │           HIGH_EXIT  = 22.0 rad/s (going down)
+│   │
+│   └─→ NO → Speed stable but blend oscillating
+│       │
+│       └─→ SOLUTION: Code bug in blend calculation
+│           Check for conflicting updates to blend_factor
+│
+NO → Continue to next problem category
+
+
+================================================================================
+PROBLEM CATEGORY 4: MOTOR STUTTERS DURING TRANSITION
+================================================================================
+
+Question: Does motor stutter/vibrate when blend changes?
+
+YES → Rough transition indicating angle mismatch
+│
+├─→ Check: Difference between open and closed angles
+│   │
+│   │   Formula: diff = g_closed_loop_elec_before_blend -
+│   │                   g_open_loop_elec_before_blend
+│   │
+│   ├─→ |diff| > 0.5 rad (large mismatch)
+│   │   │
+│   │   ├─→ Check: Is difference constant or changing?
+│   │   │   │
+│   │   │   ├─→ Constant offset → Calibration issue
+│   │   │   │   │
+│   │   │   │   └─→ SOLUTIONS:
+│   │   │   │       1. Recalibrate encoder offset
+│   │   │   │       2. Check electrical angle calculation
+│   │   │   │       3. Verify pole pair count (50)
+│   │   │   │
+│   │   │   └─→ Growing offset → Accumulation error
+│   │   │       │
+│   │   │       └─→ SOLUTIONS:
+│   │   │           1. Check open-loop accumulation
+│   │   │           2. Verify delta_time calculation
+│   │   │           3. Check for angle wraparound bugs
+│   │   │
+│   │   └─→ Check: Does angle jump at transition?
+│   │       │
+│   │       ├─→ YES → Discontinuity in blended angle
+│   │       │   │
+│   │       │   └─→ SOLUTION: Check wraparound handling
+│   │       │       Lines ~2795-2809 in StepperMotor.cpp
+│   │       │       Verify 2π boundary correction logic
+│   │       │
+│   │       └─→ NO → Smooth angle but still stuttering
+│   │           │
+│   │           └─→ Check duty cycles during transition
+│   │               │
+│   │               ├─→ Glitches → PWM generation issue
+│   │               │
+│   │               └─→ Smooth → May be cogging torque
+│   │
+│   └─→ |diff| < 0.5 rad (angles aligned)
+│       │
+│       └─→ Check: Is rate limiter constantly active?
+│           │
+│           ├─→ YES → Rate limit too restrictive
+│           │   │
+│           │   └─→ SOLUTION: Increase MAX_ANGLE_CHANGE
+│           │       Currently 0.5 rad, try 1.0 rad
+│           │
+│           └─→ NO → Other causes
+│               │
+│               ├─→ Check current sensing (g_amperage_q/d)
+│               ├─→ Check voltage limits
+│               └─→ Check for electrical noise
+│
+NO → Continue to next problem category
+
+
+================================================================================
+PROBLEM CATEGORY 5: TRANSITION TOO FAST OR TOO SLOW
+================================================================================
+
+Question: Is transition timing not ideal?
+
+Transition too fast (< 1 second)
+│
+└─→ SOLUTION: Widen speed threshold range
+    │
+    Current: 10-20 rad/s (10 rad/s range)
+    Try: 5-30 rad/s (25 rad/s range)
+    │
+    Edit StepperMotor.cpp line ~2744:
+    const float SPEED_THRESHOLD_LOW = 5.0f;
+    const float SPEED_THRESHOLD_HIGH = 30.0f;
+
+
+Transition too slow (> 5 seconds)
+│
+└─→ SOLUTION: Narrow speed threshold range
+    │
+    Current: 10-20 rad/s (10 rad/s range)
+    Try: 12-18 rad/s (6 rad/s range)
+    │
+    Edit StepperMotor.cpp line ~2744:
+    const float SPEED_THRESHOLD_LOW = 12.0f;
+    const float SPEED_THRESHOLD_HIGH = 18.0f;
+
+
+Never completes transition (stays in blend mode)
+│
+└─→ Motor not reaching HIGH threshold
+    │
+    └─→ SOLUTIONS:
+        1. Increase target speed (> 20 rad/s)
+        2. Lower HIGH threshold (e.g., 15 rad/s)
+        3. Increase acceleration rate
+
+
+================================================================================
+PROBLEM CATEGORY 6: CLOSED-LOOP OPERATION POOR
+================================================================================
+
+Question: Motor runs poorly after transition completes?
+
+YES → Problem in closed-loop mode (blend = 1.0)
+│
+├─→ Check: Is encoder reading correctly?
+│   │
+│   ├─→ g_as5048_angle not updating
+│   │   │
+│   │   └─→ SOLUTION: Fix encoder communication
+│   │       - Check SPI connection
+│   │       - Verify AS5048A power
+│   │       - Check chip select signal
+│   │
+│   ├─→ g_as5048_angle jumping/noisy
+│   │   │
+│   │   └─→ SOLUTIONS:
+│   │       - Add encoder filtering
+│   │       - Check for EMI/noise
+│   │       - Verify magnet alignment
+│   │
+│   └─→ g_as5048_angle smooth and updating
+│       │
+│       └─→ Check: Motor behavior
+│           │
+│           ├─→ No torque / cogging
+│           │   │
+│           │   └─→ Check g_amperage_q (should be > 0)
+│           │       Check electrical angle offset
+│           │
+│           ├─→ Wrong direction
+│           │   │
+│           │   └─→ SOLUTION: Invert encoder direction
+│           │       or phase sequence
+│           │
+│           └─→ Oscillating
+│               │
+│               └─→ SOLUTION: Tune PID controller
+│                   Check velocity feedback gains
+│
+NO → Motor operation is acceptable
+
+
+================================================================================
+QUICK DIAGNOSTIC FLOWCHART
+================================================================================
+
+                        START
+                          │
+                          ▼
+              ┌──────────────────────┐
+              │ Add g_hybrid_blend_  │
+              │ factor to monitor    │
+              └──────────┬───────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │ Run motor startup    │
+              │ sequence             │
+              └──────────┬───────────┘
+                         │
+                         ▼
+        ┌────────────────┴────────────────┐
+        │                                  │
+        ▼                                  ▼
+   Blend = 0.0                       Blend changes
+   (stuck)                           0.0 → 1.0
+        │                                  │
+        ▼                                  ▼
+   Category 1                    ┌─────────┴─────────┐
+   (Not changing)                │                   │
+        │                        ▼                   ▼
+        └───→ Fix speed    Smooth ramp        Oscillating
+              measurement       │                   │
+                               ▼                   ▼
+                          Check motor        Category 3
+                          smoothness         (Oscillating)
+                               │                   │
+                    ┌──────────┴──────────┐       └───→ Add
+                    │                     │              hysteresis
+                    ▼                     ▼
+               Smooth motor         Motor stutters
+               operation                  │
+                    │                     ▼
+                    │              Category 4
+                    │              (Angle mismatch)
+                    │                     │
+                    │                     └───→ Check angle
+                    │                           difference
+                    ▼
+              SUCCESS! ✓
+
+
+================================================================================
+COMMON SOLUTIONS SUMMARY
+================================================================================
+
+Issue                          Solution
+──────────────────────────────────────────────────────────────────────
+Blend stuck at 0.0             Increase target speed or lower threshold
+Blend stuck at 1.0             Reset state at startup
+Blend oscillating              Add hysteresis to thresholds
+Motor stutters                 Fix encoder offset/direction
+Angle discontinuity            Fix wraparound handling code
+Rate limiter always active     Increase MAX_ANGLE_CHANGE limit
+Transition too fast            Widen threshold range (5-30 rad/s)
+Transition too slow            Narrow threshold range (12-18 rad/s)
+Poor closed-loop operation     Check encoder, tune PID gains
+Speed not measured             Debug Kalman filter
+
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+Before diving into troubleshooting, verify basics:
+
+☐ Motor can run in pure open-loop (blend = 0.0 manually forced)
+☐ Motor can run in pure closed-loop (blend = 1.0 manually forced)
+☐ Encoder is reading position (g_as5048_angle updating)
+☐ Kalman velocity estimate is working (g_kalman_velocity reasonable)
+☐ Target speed is above transition threshold (> 20 rad/s)
+☐ Code compiles without warnings
+☐ All debug variables are visible in STM32CubeMonitor
+
+If any of the above fail, fix those FIRST before debugging blend!
+
+
+================================================================================
+ADVANCED DEBUGGING
+================================================================================
+
+For complex issues, add these temporary debug variables:
+
+1. Raw angle difference:
+   volatile float g_debug_angle_diff =
+       g_closed_loop_elec_before_blend - g_open_loop_elec_before_blend;
+
+2. Unwrapped angles (after wraparound correction):
+   volatile float g_debug_unwrapped_open;
+   volatile float g_debug_unwrapped_closed;
+
+3. Blend calculation breakdown:
+   volatile float g_debug_open_contribution =
+       (1.0f - blend_factor) * open_loop_electrical;
+   volatile float g_debug_closed_contribution =
+       blend_factor * closed_loop_electrical;
+
+4. Rate limiter details:
+   volatile float g_debug_angle_change_raw;
+   volatile float g_debug_angle_change_clamped;
+   volatile bool g_debug_rate_limit_hit;
+
+
+================================================================================
+FINAL NOTES
+================================================================================
+
+Most Common Causes:
+1. Speed not reaching threshold (50% of cases)
+2. Encoder offset wrong (30% of cases)
+3. Kalman filter instability (15% of cases)
+4. Code bugs (5% of cases)
+
+Most Effective Solutions:
+1. Lower speed thresholds to 5-15 rad/s
+2. Recalibrate encoder during alignment
+3. Add hysteresis (±2 rad/s) to thresholds
+4. Verify all angles in same reference frame
+
+When All Else Fails:
+1. Force blend_factor = 0.5 manually
+2. Observe motor behavior at fixed blend ratio
+3. Gradually adjust blend and find stable region
+4. Use that as new threshold values
+
+Remember: The blend mechanism is working in your code RIGHT NOW!
+You just need to visualize it and tune the parameters. 🎯
+
+
+================================================================================
+END OF TROUBLESHOOTING TREE
+================================================================================

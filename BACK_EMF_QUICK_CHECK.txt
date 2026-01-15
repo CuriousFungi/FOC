@@ -1,0 +1,288 @@
+================================================================================
+BACK-EMF DIAGNOSTIC - QUICK CHECKLIST
+================================================================================
+
+PROBLEM: Inductance fix (3.2 H → 0.0032 H) had NO visible effect
+QUESTION: Is back-EMF calculation actually being used/relevant?
+
+================================================================================
+STEP 1: ADD NEW DEBUG VARIABLES (1 minute)
+================================================================================
+
+These variables have been added to the code. Add to STM32CubeMonitor:
+
+☐ g_debug_back_emf_q_axis           → Total back-EMF calculated (V)
+☐ g_debug_amperage_q_for_bemf       → Q-axis current (A)
+☐ g_debug_mag_flux_linkage_q        → L×I_q term (Wb)
+☐ g_debug_perm_magnet_flux          → Permanent magnet flux (Wb)
+☐ g_debug_inductance_value          → Inductance used (H)
+☐ g_debug_measured_elec_rad_per_sec → Electrical speed (rad/s)
+
+Also monitor existing:
+☐ g_desired_voltage_q_before_clamp  → What controller wants (V)
+☐ g_m_voltage_q_in_controller       → What controller gets (V, ≤20V)
+☐ g_kalman_velocity                 → Actual speed (rad/s)
+
+================================================================================
+STEP 2: RUN MOTOR AND RECORD VALUES (2 minutes)
+================================================================================
+
+Run motor to speed where it stops, record these values:
+
+Speed at motor stop: ___________ rad/s
+
+BACK-EMF COMPONENTS:
+g_debug_back_emf_q_axis:           ___________ V
+g_debug_amperage_q_for_bemf:       ___________ A
+g_debug_mag_flux_linkage_q:        ___________ Wb
+g_debug_perm_magnet_flux:          ___________ Wb
+g_debug_inductance_value:          ___________ H
+g_debug_measured_elec_rad_per_sec: ___________ rad/s
+
+VOLTAGE VALUES:
+g_desired_voltage_q_before_clamp:  ___________ V
+g_m_voltage_q_in_controller:       ___________ V
+
+================================================================================
+STEP 3: ANALYZE RESULTS (1 minute)
+================================================================================
+
+CHECK A: Is inductance term relevant?
+──────────────────────────────────────────────────────────────────────────
+
+Calculate ratio:
+  inductance_contribution = g_debug_mag_flux_linkage_q /
+                           (g_debug_mag_flux_linkage_q + g_debug_perm_magnet_flux)
+
+If < 10% → Inductance term is NEGLIGIBLE (explains why fix had no effect!)
+If > 30% → Inductance term is SIGNIFICANT (should have seen effect)
+
+
+CHECK B: Is current too low?
+──────────────────────────────────────────────────────────────────────────
+
+If g_debug_amperage_q_for_bemf < 0.5A:
+  → Current is LOW
+  → L×I term is tiny regardless of L value
+  → This explains why inductance fix had no effect!
+
+If g_debug_amperage_q_for_bemf > 1.5A:
+  → Current is NORMAL
+  → L×I term should be significant
+  → Something else is wrong
+
+
+CHECK C: Is voltage saturating?
+──────────────────────────────────────────────────────────────────────────
+
+Compare:
+  desired = g_desired_voltage_q_before_clamp
+  actual = g_m_voltage_q_in_controller
+
+If desired > actual + 2V:
+  → VOLTAGE SATURATION!
+  → Controller wants more than available
+  → This is the real problem, not inductance
+
+If desired ≈ actual (within 2V):
+  → No saturation
+  → Problem is elsewhere
+
+
+CHECK D: Is back-EMF calculation reasonable?
+──────────────────────────────────────────────────────────────────────────
+
+Calculate expected back-EMF:
+  expected_bemf = g_debug_measured_elec_rad_per_sec ×
+                  (g_debug_mag_flux_linkage_q + g_debug_perm_magnet_flux)
+
+Compare to g_debug_back_emf_q_axis:
+  If close → Calculation is correct
+  If very different → Bug in calculation
+
+
+CHECK E: Is permanent magnet flux reasonable?
+──────────────────────────────────────────────────────────────────────────
+
+At 30 rad/s mechanical:
+  ω_elec = 30 × 50 = 1500 rad/s
+
+Expected back-EMF with different flux values:
+  0.005 Wb → 1500 × 0.005 = 7.5V
+  0.010 Wb → 1500 × 0.010 = 15.0V
+  0.015 Wb → 1500 × 0.015 = 22.5V
+  0.020 Wb → 1500 × 0.020 = 30.0V
+
+If g_debug_back_emf_q_axis >> expected:
+  → PERM_MAGNET_FLUX_LINKAGE is TOO HIGH
+  → Reduce it!
+
+If g_debug_back_emf_q_axis << expected:
+  → PERM_MAGNET_FLUX_LINKAGE is TOO LOW
+  → Increase it (but you already did this)
+
+
+================================================================================
+DIAGNOSIS FLOWCHART
+================================================================================
+
+START: Inductance fix had no effect
+  ↓
+  ├─→ CHECK A: Inductance contribution < 10%?
+  │   └─→ YES → Inductance term is negligible
+  │       └─→ This is NORMAL if current is low
+  │           └─→ GO TO CHECK B
+  │
+  ├─→ CHECK B: Current < 0.5A?
+  │   └─→ YES → LOW CURRENT explains why inductance fix irrelevant
+  │       └─→ Focus on voltage saturation or perm magnet flux
+  │           └─→ GO TO CHECK C
+  │
+  ├─→ CHECK C: Voltage saturating (desired > actual)?
+  │   ├─→ YES → VOLTAGE SATURATION is the problem!
+  │   │   └─→ SOLUTION: Increase voltage limit OR reduce perm magnet flux
+  │   │
+  │   └─→ NO → Voltage is OK, problem is elsewhere
+  │       └─→ GO TO CHECK E
+  │
+  └─→ CHECK E: Back-EMF >> 30V at 30 rad/s?
+      ├─→ YES → Perm magnet flux is TOO HIGH
+      │   └─→ SOLUTION: Reduce PERM_MAGNET_FLUX_LINKAGE
+      │
+      └─→ NO → Back-EMF is reasonable
+          └─→ Problem is NOT back-EMF related
+              └─→ Check: synchronization, PI tuning, mechanical
+
+
+================================================================================
+MOST LIKELY SCENARIOS
+================================================================================
+
+SCENARIO 1: Low Current (70% probability)
+──────────────────────────────────────────────────────────────────────────
+Symptoms:
+  ✓ g_debug_amperage_q_for_bemf < 0.5A
+  ✓ g_debug_mag_flux_linkage_q < 0.002 Wb
+  ✓ Inductance term < 10% of total
+
+Explanation:
+  L×I term is tiny because I is small
+  Doesn't matter if L is 3.2 or 0.0032 when I ≈ 0.2A
+  Permanent magnet term dominates
+
+Next action:
+  Focus on permanent magnet flux constant tuning
+
+
+SCENARIO 2: Voltage Saturation (20% probability)
+──────────────────────────────────────────────────────────────────────────
+Symptoms:
+  ✓ g_desired_voltage_q_before_clamp > 25V
+  ✓ g_m_voltage_q_in_controller = 20V (stuck at limit)
+  ✓ Motor stops when saturation occurs
+
+Explanation:
+  Controller can't deliver enough voltage
+  Inductance fix changes desired from 500V to 25V
+  But both saturate at 20V → motor sees same thing
+
+Next action:
+  Increase voltage_limit to 24V (if supply supports)
+  OR reduce PERM_MAGNET_FLUX_LINKAGE
+
+
+SCENARIO 3: Perm Magnet Flux Too High (10% probability)
+──────────────────────────────────────────────────────────────────────────
+Symptoms:
+  ✓ g_debug_back_emf_q_axis > 30V at 30 rad/s
+  ✓ g_debug_perm_magnet_flux = 0.015 or higher
+  ✓ Back-EMF grows rapidly with speed
+
+Explanation:
+  PERM_MAGNET_FLUX_LINKAGE overestimated
+  Controller overcompensates for back-EMF
+  Applies too much voltage, causes instability
+
+Next action:
+  Reduce PERM_MAGNET_FLUX_LINKAGE to 0.010 or 0.005
+
+
+================================================================================
+QUICK CALCULATIONS
+================================================================================
+
+Back-EMF Components:
+────────────────────────────────────────────────────────────────────────────
+Total back-EMF = ω_elec × (L×I_q + Ψ_magnet)
+
+At 30 rad/s mechanical:
+  ω_elec = 30 × 50 = 1500 rad/s
+
+Inductance term:
+  At I_q = 0.2A: L×I = 0.0032 × 0.2 = 0.0006 Wb → 1500 × 0.0006 = 0.9V
+  At I_q = 1.0A: L×I = 0.0032 × 1.0 = 0.0032 Wb → 1500 × 0.0032 = 4.8V
+  At I_q = 2.0A: L×I = 0.0032 × 2.0 = 0.0064 Wb → 1500 × 0.0064 = 9.6V
+
+Permanent magnet term:
+  Ψ = 0.015 Wb → 1500 × 0.015 = 22.5V
+
+Total at different currents:
+  I_q = 0.2A: 0.9 + 22.5 = 23.4V (inductance is 4% of total)
+  I_q = 1.0A: 4.8 + 22.5 = 27.3V (inductance is 18% of total)
+  I_q = 2.0A: 9.6 + 22.5 = 32.1V (inductance is 30% of total)
+
+
+================================================================================
+ACTION PLAN BASED ON RESULTS
+================================================================================
+
+IF inductance contribution < 10% AND current < 0.5A:
+  → NORMAL! Inductance fix correctly had little effect
+  → Focus on tuning PERM_MAGNET_FLUX_LINKAGE instead
+  → Try reducing to 0.010 or 0.005 if voltage saturating
+
+IF inductance contribution > 20% AND current > 1A:
+  → Inductance fix SHOULD have had effect
+  → Verify inductance value is actually 0.0032 (not 3.2)
+  → Check if code was actually rebuilt and flashed
+
+IF voltage saturating (desired >> actual):
+  → Increase voltage limit to 24V (if hardware supports)
+  → OR reduce PERM_MAGNET_FLUX_LINKAGE to lower back-EMF
+  → Check power supply voltage under load (may be sagging)
+
+IF back-EMF > 30V at 30 rad/s:
+  → PERM_MAGNET_FLUX_LINKAGE is TOO HIGH
+  → Reduce incrementally: try 0.012, then 0.010, then 0.008
+  → Monitor g_debug_back_emf_q_axis to verify reduction
+
+IF all values look reasonable but motor still stops:
+  → Problem is NOT back-EMF related
+  → Check synchronization (angles updating?)
+  → Check PI controller stability
+  → Check for mechanical binding
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Inductance fix may have had no effect because:
+  1. Current is LOW (< 0.5A) → L×I term is tiny
+  2. Permanent magnet flux DOMINATES (97% of total flux linkage)
+  3. Voltage already SATURATED at limit (both scenarios hit same ceiling)
+  4. Something ELSE is stopping motor (not back-EMF)
+
+Most likely: LOW CURRENT + PERMANENT MAGNET DOMINANCE
+  → The inductance term simply doesn't matter at these currents
+  → Focus on tuning PERM_MAGNET_FLUX_LINKAGE instead
+
+IMMEDIATE ACTION:
+  1. Monitor g_debug_amperage_q_for_bemf
+  2. Monitor g_debug_back_emf_q_axis
+  3. Check if voltage is saturating
+  4. Adjust PERM_MAGNET_FLUX_LINKAGE based on results
+
+Report back with the recorded values! 🎯
+
+================================================================================

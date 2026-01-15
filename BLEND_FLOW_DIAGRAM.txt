@@ -1,0 +1,204 @@
+================================================================================
+BLEND RATIO CALCULATION - FLOW DIAGRAM
+================================================================================
+
+                           Motor Control Loop
+                                  |
+                                  v
+                    ┌─────────────────────────┐
+                    │  Measure Motor Speed    │
+                    │  (Kalman Filter)        │
+                    └─────────────────────────┘
+                                  |
+                                  v
+                         g_kalman_velocity
+                                  |
+                                  v
+                    ┌─────────────────────────┐
+                    │  Calculate Blend Factor │
+                    │                         │
+                    │  if (speed < 10 rad/s)  │
+                    │    blend = 0.0          │
+                    │  elif (speed > 20)      │
+                    │    blend = 1.0          │
+                    │  else                   │
+                    │    blend = (speed-10)/10│
+                    └─────────────────────────┘
+                                  |
+                                  v
+                         g_hybrid_blend_factor
+                          (0.0 to 1.0)
+                                  |
+              ┌───────────────────┴───────────────────┐
+              v                                       v
+   ┌──────────────────────┐              ┌──────────────────────┐
+   │  OPEN-LOOP PATH      │              │  CLOSED-LOOP PATH    │
+   │                      │              │                      │
+   │  Accumulate angle    │              │  Read encoder        │
+   │  based on target     │              │  Get electrical      │
+   │  velocity            │              │  angle               │
+   └──────────────────────┘              └──────────────────────┘
+              |                                       |
+              v                                       v
+   g_open_loop_elec_before_blend      g_closed_loop_elec_before_blend
+              |                                       |
+              └───────────────────┬───────────────────┘
+                                  v
+                    ┌─────────────────────────┐
+                    │  Handle Wraparound      │
+                    │  (0/2π boundary)        │
+                    │                         │
+                    │  angle_diff = closed -  │
+                    │               open      │
+                    │  if (diff > π)          │
+                    │    closed -= 2π         │
+                    │  if (diff < -π)         │
+                    │    closed += 2π         │
+                    └─────────────────────────┘
+                                  |
+                                  v
+                    ┌─────────────────────────┐
+                    │  Blend Angles           │
+                    │                         │
+                    │  blended =              │
+                    │    (1-blend) * open +   │
+                    │    blend * closed       │
+                    └─────────────────────────┘
+                                  |
+                                  v
+                  g_blended_angle_before_rate_limit
+                                  |
+                                  v
+                    ┌─────────────────────────┐
+                    │  Rate Limiter           │
+                    │  (Prevent voltage       │
+                    │   spikes)               │
+                    │                         │
+                    │  max_change = 0.5 rad   │
+                    │  if (|delta| > max)     │
+                    │    clamp delta          │
+                    └─────────────────────────┘
+                                  |
+                                  v
+                   g_blended_angle_after_rate_limit
+                                  |
+                                  v
+                    ┌─────────────────────────┐
+                    │  Inverse Park Transform │
+                    │  (Generate PWM)         │
+                    │                         │
+                    │  angle → U_alpha, U_beta│
+                    │  → duty cycles          │
+                    └─────────────────────────┘
+                                  |
+                                  v
+                          Motor Windings
+
+
+================================================================================
+BLEND FACTOR vs SPEED
+================================================================================
+
+Blend     1.0 |                    ┌────────────────────────
+Factor        |                   /
+              |                  /
+              |                 /
+          0.5 |                /
+              |               /
+              |              /
+              |             /
+          0.0 |────────────┘
+              └────────────────────────────────────────────────
+                  0    5    10   15   20   25   30   35   40
+                            Speed (rad/s)
+
+              Open Loop  Transition   Closed Loop
+              ─────────  ──────────   ───────────
+              Pure       Blended      Pure
+              Accumulated Mixed        Encoder
+              Angle      Control      Based
+
+
+================================================================================
+ANGLE BLENDING EXAMPLE
+================================================================================
+
+Scenario: Speed = 15 rad/s (middle of transition)
+
+Step 1: Calculate blend_factor
+   blend_factor = (15 - 10) / (20 - 10) = 0.5
+
+Step 2: Get both angles
+   open_loop_angle   = 1.2 rad  (from accumulation)
+   closed_loop_angle = 1.3 rad  (from encoder)
+
+Step 3: Check for wraparound
+   diff = 1.3 - 1.2 = 0.1 rad
+   |diff| < π, so no wraparound correction needed
+
+Step 4: Blend
+   blended = (1 - 0.5) × 1.2 + 0.5 × 1.3
+           = 0.5 × 1.2 + 0.5 × 1.3
+           = 0.6 + 0.65
+           = 1.25 rad
+
+Step 5: Rate limit (if needed)
+   prev_angle = 1.20 rad
+   angle_change = 1.25 - 1.20 = 0.05 rad
+   |0.05| < 0.5 (max), so no limiting needed
+   final_angle = 1.25 rad
+
+Result: Motor commutates at 1.25 rad electrical angle
+
+
+================================================================================
+WRAPAROUND HANDLING EXAMPLE
+================================================================================
+
+Scenario: Angles near 0/2π boundary
+
+Before correction:
+   open_loop_angle   = 0.1 rad  (just past zero)
+   closed_loop_angle = 6.1 rad  (just before 2π ≈ 6.28)
+
+Step 1: Calculate difference
+   diff = 6.1 - 0.1 = 6.0 rad
+
+Step 2: Check if wraparound
+   diff > π (3.14), so wraparound detected!
+
+Step 3: Unwrap angle
+   closed_loop_angle -= 2π
+   closed_loop_angle = 6.1 - 6.28 = -0.18 rad
+
+Step 4: Now blend smoothly
+   blend_factor = 0.5
+   blended = 0.5 × 0.1 + 0.5 × (-0.18)
+           = 0.05 - 0.09
+           = -0.04 rad
+
+Step 5: Normalize back to [0, 2π)
+   final_angle = -0.04 + 6.28 = 6.24 rad
+
+Result: Smooth blending across boundary, no discontinuity!
+
+
+================================================================================
+DEBUG VARIABLE SUMMARY
+================================================================================
+
+Variable Name                      | Type  | Range      | Purpose
+-----------------------------------|-------|------------|---------------------
+g_hybrid_blend_factor              | float | 0.0 - 1.0  | Blend ratio
+g_hybrid_measured_speed            | float | 0 - ∞      | Speed for calc
+g_open_loop_elec_before_blend      | float | 0 - 2π     | Open angle input
+g_closed_loop_elec_before_blend    | float | 0 - 2π     | Closed angle input
+g_blended_angle_before_rate_limit  | float | 0 - 2π     | Blend output
+g_blended_angle_after_rate_limit   | float | 0 - 2π     | Final angle
+g_angle_change_limited             | float | -0.5 - 0.5 | Rate limit delta
+g_cached_encoder_angle             | float | 0 - 2π     | Raw encoder
+g_kalman_velocity                  | float | -∞ - ∞     | Filtered velocity
+g_target_rps_to_cl_controller      | float | 0 - ∞      | Target speed
+
+
+================================================================================

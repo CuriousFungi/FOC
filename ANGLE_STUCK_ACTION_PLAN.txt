@@ -1,0 +1,420 @@
+================================================================================
+ANGLE STUCK AT 4.82 RAD - IMMEDIATE ACTION PLAN
+================================================================================
+
+PROBLEM: All electrical angles frozen at 4.82 rad, motor runs rough
+ROOT CAUSE: Angle calculation pipeline not executing or returning stale values
+STATUS: Encoder hardware works (g_as5048_angle updates), software pipeline broken
+
+================================================================================
+STEP 1: ADD DIAGNOSTIC VARIABLES (2 minutes)
+================================================================================
+
+Open STM32CubeMonitor and add these 8 variables:
+
+EXECUTION COUNTERS:
+☐ g_loopfoc_update_count              → Should be ~10,000/second
+☐ g_update_speed_cl_call_count        → Should be ~1,000/second
+☐ g_get_electric_angle_call_count     → Should be ~10,000/second
+
+ANGLE PIPELINE:
+☐ g_encoder_mech_angle_raw            → Should match g_as5048_angle
+☐ g_encoder_elec_angle_raw            → Should show fast sawtooth (50x)
+☐ g_calibration_offset_elec           → Should be constant (0 to 2π)
+☐ g_encoder_elec_after_offset         → Should show fast sawtooth
+☐ g_cached_encoder_angle              → Should match above
+
+ALREADY VISIBLE:
+✓ g_as5048_angle                      → KNOWN GOOD (updates correctly)
+
+================================================================================
+STEP 2: RUN MOTOR AND CAPTURE DATA (1 minute)
+================================================================================
+
+1. Start motor
+2. Let run for 5 seconds
+3. Stop and analyze captured data
+
+================================================================================
+STEP 3: DIAGNOSE FROM COUNTER VALUES (30 seconds)
+================================================================================
+
+CHECK A: Is loopFOC() running?
+─────────────────────────────────────────────────────────────────────
+Look at: g_loopfoc_update_count
+
+IF stays at 0 or low value:
+   → loopFOC() NOT BEING CALLED
+   → GO TO FIX #1
+
+IF increases by ~50,000 in 5 seconds:
+   → loopFOC() IS RUNNING ✓
+   → Continue to CHECK B
+
+
+CHECK B: Is get_electric_angle_radians() being called?
+─────────────────────────────────────────────────────────────────────
+Look at: g_get_electric_angle_call_count
+
+IF stays at 0 or low value:
+   → Function not called from loopFOC()
+   → GO TO FIX #2
+
+IF increases (should match g_loopfoc_update_count):
+   → Function IS BEING CALLED ✓
+   → Continue to CHECK C
+
+
+CHECK C: Does mechanical angle update in control loop?
+─────────────────────────────────────────────────────────────────────
+Compare: g_as5048_angle vs g_encoder_mech_angle_raw
+
+IF g_as5048_angle updates BUT g_encoder_mech_angle_raw STUCK:
+   → TWO DIFFERENT SENSOR READ PATHS!
+   → Control uses wrong/stale path
+   → GO TO FIX #3
+
+IF BOTH update and match:
+   → Sensor read path is GOOD ✓
+   → Continue to CHECK D
+
+
+CHECK D: Does electrical angle calculation work?
+─────────────────────────────────────────────────────────────────────
+Look at: g_encoder_elec_angle_raw
+
+IF stays constant:
+   → mechanical_to_electrical_radians() failing
+   → OR angle not passed to function
+   → GO TO FIX #4
+
+IF shows sawtooth pattern (0→2π wrapping rapidly):
+   → Mech→Elec conversion WORKS ✓
+   → Continue to CHECK E
+
+
+CHECK E: Is offset applied correctly?
+─────────────────────────────────────────────────────────────────────
+Look at: g_encoder_elec_after_offset
+
+IF stays constant (4.82):
+   → Offset subtraction or normalize failing
+   → OR result not returned/assigned
+   → GO TO FIX #5
+
+IF shows sawtooth pattern:
+   → Offset application WORKS ✓
+   → Continue to CHECK F
+
+
+CHECK F: Is angle cached properly?
+─────────────────────────────────────────────────────────────────────
+Look at: g_cached_encoder_angle
+
+IF stays at 4.82 (but g_encoder_elec_after_offset updates):
+   → Caching in loopFOC() not working
+   → Assignment not happening
+   → GO TO FIX #6
+
+IF matches g_encoder_elec_after_offset:
+   → Caching WORKS ✓
+   → Problem is in blending or downstream
+
+
+================================================================================
+FIXES BASED ON DIAGNOSIS
+================================================================================
+
+FIX #1: loopFOC() Not Running
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: g_loopfoc_update_count stays at 0
+
+POSSIBLE CAUSES:
+- Motion control mode not set correctly
+- Timer interrupt not firing
+- Early return in loopFOC()
+
+ACTIONS:
+1. Check motion control mode setting (should be CL_VELOCITY)
+2. Verify timer 1 is configured and running
+3. Check for early returns in loopFOC() before encoder read
+
+
+FIX #2: get_electric_angle_radians() Not Called
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: g_get_electric_angle_call_count stays at 0
+
+LOCATION: StepperMotor.cpp line ~1429
+
+CHECK THIS CODE:
+```
+float encoder_angle_from_get_electric = get_electric_angle_radians();
+g_cached_encoder_angle = encoder_angle_from_get_electric;
+```
+
+POSSIBLE CAUSES:
+- Code wrapped in #if 0
+- Early return before this line
+- Function call commented out
+
+ACTIONS:
+1. Verify this code section is NOT in #if 0 block
+2. Check for early returns before line 1429
+3. Ensure ELSE branch (line ~1422) is active
+
+
+FIX #3: Two Sensor Read Paths (MOST LIKELY!)
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: g_as5048_angle updates BUT g_encoder_mech_angle_raw stuck
+
+EXPLANATION:
+- g_as5048_angle updated by Kalman filter (external path)
+- Control uses m_sensor.get_mechanical_phase_angle_radians()
+- These are DIFFERENT functions reading DIFFERENT data!
+
+ROOT CAUSE: get_mechanical_phase_angle_radians() returns stale/cached value
+
+LOCATION: AS5048A.cpp line ~988
+
+CHECK THIS CODE:
+```
+float AS5048A::get_mechanical_phase_angle_radians()
+{
+    float result;
+    if(fetch_radians(result))
+    {
+        return result;
+    }
+    else
+    {
+        return 0.0f;  // ← Returns 0 on failure!
+    }
+}
+```
+
+ACTIONS:
+1. Check g_fetch_radians_fail_count - is it increasing?
+2. If yes → fetch_radians() failing, returns 0.0f
+3. But you see 4.82, not 0.0... so probably different issue
+4. Check if fetch_radians() actually called in get_mechanical_phase_angle_radians()
+5. May be returning cached static variable instead of fresh read
+
+
+FIX #4: Mechanical to Electrical Conversion Failing
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: g_encoder_mech_angle_raw updates but g_encoder_elec_angle_raw stuck
+
+LOCATION: StepperMotor.cpp line ~3531
+
+CHECK THIS CODE:
+```
+float mech_angle = m_sensor.get_mechanical_phase_angle_radians();
+float electic_radians = mechanical_to_electrical_radians(mech_angle);
+```
+
+POSSIBLE CAUSES:
+- mechanical_to_electrical_radians() returns constant
+- Pole pair count = 0 or 1 (should be 50)
+- Function not actually called
+
+ACTIONS:
+1. Verify pole_pairs member variable = 50
+2. Check mechanical_to_electrical_radians() implementation
+3. Add debug output inside function
+
+
+FIX #5: Offset Subtraction or Normalize Failing
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: g_encoder_elec_angle_raw updates but g_encoder_elec_after_offset stuck
+
+LOCATION: StepperMotor.cpp line ~3548
+
+CHECK THIS CODE:
+```
+float raw_angle = electic_radians - m_radian_offset_to_electric_zero;
+float result = normalize_radians(raw_angle);
+g_encoder_elec_after_offset = result;
+return result;
+```
+
+POSSIBLE CAUSES:
+- normalize_radians() failing
+- result not returned
+- Assignment not happening
+- Return statement not reached
+
+ACTIONS:
+1. Check if code reaches "return result;" line
+2. Verify normalize_radians() implementation
+3. Check for early returns before assignment
+
+
+FIX #6: Caching Not Working
+─────────────────────────────────────────────────────────────────────
+DIAGNOSIS: All upstream angles update but g_cached_encoder_angle stuck
+
+LOCATION: StepperMotor.cpp line ~1430
+
+CHECK THIS CODE:
+```
+g_cached_encoder_angle = encoder_angle_from_get_electric;
+```
+
+POSSIBLE CAUSES:
+- Assignment not executing
+- Variable shadowing (local vs global)
+- Optimization removing assignment
+
+ACTIONS:
+1. Add volatile to g_cached_encoder_angle declaration
+2. Check for duplicate variable declarations
+3. Verify assignment line is executed (add debug counter)
+
+
+================================================================================
+MOST LIKELY ROOT CAUSE (Based on Symptoms)
+================================================================================
+
+HYPOTHESIS: loopFOC() is NOT running or NOT reaching encoder read code
+
+EVIDENCE:
+- Motor runs (so SOME code is executing voltage commands)
+- g_as5048_angle updates (Kalman filter running independently)
+- All control loop angles stuck at 4.82 (never updated after init)
+
+PROBABILITY: 70%
+
+IMMEDIATE TEST:
+Add g_loopfoc_update_count to monitor
+IF it stays at 0 → This is the issue
+IF it increases → Problem is further downstream
+
+
+ALTERNATIVE HYPOTHESIS: Sensor read in control returns cached/stale value
+
+EVIDENCE:
+- g_as5048_angle updates (one read path works)
+- Control angles stuck (different read path)
+
+PROBABILITY: 25%
+
+IMMEDIATE TEST:
+Add g_encoder_mech_angle_raw to monitor
+Compare to g_as5048_angle
+IF different → Two paths exist, control uses wrong one
+
+
+================================================================================
+REFERENCE: What Values Should Look Like When Working
+================================================================================
+
+COUNTERS (after 5 seconds):
+g_loopfoc_update_count           ≈ 50,000
+g_update_speed_cl_call_count     ≈ 5,000
+g_get_electric_angle_call_count  ≈ 50,000
+
+ANGLES (continuously changing):
+g_as5048_angle                   0→2π sawtooth (slow, 1× per rotation)
+g_encoder_mech_angle_raw         0→2π sawtooth (matches above)
+g_encoder_elec_angle_raw         0→2π sawtooth (fast, 50× per rotation)
+g_encoder_elec_after_offset      0→2π sawtooth (fast, 50× per rotation)
+g_cached_encoder_angle           0→2π sawtooth (matches above)
+
+CONSTANTS:
+g_calibration_offset_elec        Constant value 0 to 2π (yours might be 4.82?)
+
+IF ANY ANGLE IS CONSTANT → That's where the pipeline breaks!
+
+
+================================================================================
+QUICK REFERENCE: Variable Locations
+================================================================================
+
+COUNTERS:
+- g_loopfoc_update_count            StepperMotor.cpp line ~1431
+- g_update_speed_cl_call_count      StepperMotor.cpp line ~2473
+- g_get_electric_angle_call_count   StepperMotor.cpp line ~3539
+
+ANGLE PIPELINE:
+- g_as5048_angle                    AS5048A.cpp line ~731 (updated in fetch_radians)
+- g_encoder_mech_angle_raw          StepperMotor.cpp line ~3541 (in get_electric_angle_radians)
+- g_encoder_elec_angle_raw          StepperMotor.cpp line ~3542
+- g_calibration_offset_elec         StepperMotor.cpp line ~3543
+- g_encoder_elec_after_offset       StepperMotor.cpp line ~3551
+- g_cached_encoder_angle            StepperMotor.cpp line ~1430 (in loopFOC)
+
+
+================================================================================
+DECISION TREE
+================================================================================
+
+START: All electrical angles stuck at 4.82 rad
+
+├─→ Add diagnostic variables (Step 1)
+│
+├─→ Run motor (Step 2)
+│
+└─→ Check counters (Step 3)
+    │
+    ├─→ g_loopfoc_update_count = 0?
+    │   └─→ YES: loopFOC() not running → FIX #1
+    │   └─→ NO: Continue...
+    │
+    ├─→ g_encoder_mech_angle_raw stuck but g_as5048_angle updates?
+    │   └─→ YES: Two sensor paths → FIX #3 (MOST LIKELY!)
+    │   └─→ NO: Continue...
+    │
+    ├─→ g_encoder_elec_angle_raw stuck?
+    │   └─→ YES: Mech→Elec conversion failing → FIX #4
+    │   └─→ NO: Continue...
+    │
+    ├─→ g_encoder_elec_after_offset stuck?
+    │   └─→ YES: Offset subtraction failing → FIX #5
+    │   └─→ NO: Continue...
+    │
+    └─→ g_cached_encoder_angle stuck?
+        └─→ YES: Caching failing → FIX #6
+        └─→ NO: Problem is in blending (downstream)
+
+
+================================================================================
+TIME ESTIMATE
+================================================================================
+
+Add variables:       2 minutes
+Run and capture:     1 minute
+Analyze counters:    2 minutes
+Identify fix:        1 minute
+Apply fix:           5 minutes
+Rebuild/flash:       1 minute
+Test:                2 minutes
+─────────────────────────────────
+TOTAL:              14 minutes
+
+
+================================================================================
+EXPECTED OUTCOME
+================================================================================
+
+BEFORE FIX:
+- All electrical angles = 4.82 (constant)
+- Motor runs rough, high current, low torque
+- Duty cycles show distorted patterns
+
+AFTER FIX:
+- All electrical angles show sawtooth patterns (0→2π)
+- Motor runs smooth, quiet, low current
+- Duty cycles show clean sinusoidal patterns
+- Much better performance (like your good tests)
+
+
+================================================================================
+NEXT STEP: ADD THE 8 VARIABLES AND RUN!
+================================================================================
+
+The diagnostic variables will immediately reveal where the pipeline breaks.
+Most likely it's FIX #3 (two sensor paths) or FIX #1 (loopFOC not running).
+
+Report back with counter values and we'll identify the exact fix needed!
+
+================================================================================

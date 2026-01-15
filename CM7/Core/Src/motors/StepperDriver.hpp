@@ -45,7 +45,6 @@ extern volatile uint32_t g_debug_ccr2b_actual;
 extern volatile float g_debug_duty2b;
 extern volatile bool g_debug_cc2ne_enabled;
 extern volatile uint32_t g_debug_ccer_value;
-extern volatile uint32_t g_debug_trigger;
 extern volatile float g_debug_U_beta;
 extern volatile float g_debug_U_beta_clamped;
 
@@ -61,6 +60,14 @@ extern volatile float g_debug_hifactor_2;
 extern volatile float g_debug_lofactor_2;
 
 
+
+typedef struct {
+    float Kp;
+    float Ki;
+    float integral;
+    float integral_max;  // Anti-windup limit
+} PIController;
+
 //=============================================================================
 //                          StepperDriver Class
 //=============================================================================
@@ -72,7 +79,7 @@ class StepperDriver
         //                        CTor
         //---------------------------------------------------------------------
         explicit
-        StepperDriver( 
+        StepperDriver(
                             TIM_HandleTypeDef* p_htim_1,
                             TIM_HandleTypeDef* p_htim_2,
                             float              voltage_limit,
@@ -91,7 +98,7 @@ class StepperDriver
         ,    m_timer_channel_phase_2A(timer_channel_phase_2A)
         ,    m_timer_channel_phase_2B(timer_channel_phase_2B)
         ,    m_duty_cycle_limit(0.0f, 1.0f)
-        ,    m_voltage_supply_limit(0.0f, m_power_supply_voltage) 
+        ,    m_voltage_supply_limit(0.0f, m_power_supply_voltage)
         //   the voltage limit needs to be within the power supply's ability
         ,    m_voltage_limit( m_voltage_supply_limit.result(voltage_limit))
         ,    m_initialized(false)
@@ -108,15 +115,15 @@ class StepperDriver
             __HAL_RCC_TIM1_CLK_ENABLE();
 
             status = HAL_TIM_Base_Start(&htim1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
-            
+
             // Start PWM channels on TIM1
             status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
-            
+
             status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
             if(HAL_OK != status) { Error_Handler(); }
@@ -128,25 +135,25 @@ class StepperDriver
             MX_TIM8_Init();
 
               __HAL_RCC_TIM8_CLK_ENABLE();
-              
+
             status = HAL_TIM_Base_Start(&htim8);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
-              
+
             // Start PWM channels on TIM8
             status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
-  
+
             status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
 #endif
 
 
-             
+
             return;
         }
         //---------------------------------------------------------------------
@@ -160,16 +167,18 @@ class StepperDriver
                             0.0f,
                             0.0f);
             #endif
+
+            m_initialized = true;
         }
 
         //---------------------------------------------------------------------
         //                          enable
         //---------------------------------------------------------------------
         void enable()
-        {   
+        {
             init();
-            
- #if 0   
+
+ #if 0
  // moved to main and this has a TIM5 ref from other board
             char  msg[] = {"enable\r\n"};
             HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(msg), strlen(msg), HAL_MAX_DELAY);
@@ -196,8 +205,8 @@ class StepperDriver
                   status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_1);   handle_status(status);
                   status = HAL_TIM_PWM_Start( m_p_htim_phase_2, TIM_CHANNEL_2);   handle_status(status);
             }
-  #endif          
-            
+  #endif
+
         }
 
         //---------------------------------------------------------------------
@@ -206,10 +215,10 @@ class StepperDriver
         void disable()
         {
             init();
-           
+
             HAL_TIM_PWM_Stop(m_p_htim_phase_1, TIM_CHANNEL_1);
             HAL_TIM_PWM_Stop(m_p_htim_phase_1, TIM_CHANNEL_2);
-            
+
             HAL_TIM_PWM_Stop(m_p_htim_phase_2, TIM_CHANNEL_1);
             HAL_TIM_PWM_Stop(m_p_htim_phase_2, TIM_CHANNEL_2);
         }
@@ -222,7 +231,7 @@ class StepperDriver
         {
             uint32_t timerFreq = HAL_RCC_GetPCLK1Freq();   // Get timer clock frequency
             uint32_t period    = timerFreq / frequency_hz; // Calculate period
-            
+
             __HAL_TIM_SET_AUTORELOAD(m_p_htim_phase_1, period - 1);  // Set auto-reload value
             __HAL_TIM_SET_AUTORELOAD(m_p_htim_phase_2, period - 1);  // Set auto-reload value
 
@@ -234,19 +243,22 @@ class StepperDriver
              uint32_t clk_cycle_start = DWT->CYCCNT;
              uint32_t clk_cycle_end   = clk_cycle_start + microseconds * (HAL_RCC_GetHCLKFreq() / 1000000);
              while (DWT->CYCCNT < clk_cycle_end);
-        
+
              return;
          }
 
-        
 
-        void set_pwm_duty_cycle(float U_alpha, 
-                                        float U_beta,  
-                                        float hifactor_1, 
-                                        float lofactor_1, 
-                                        float hifactor_2, 
+
+        void set_pwm_duty_cycle(float U_alpha,
+                                        float U_beta,
+                                        float hifactor_1,
+                                        float lofactor_1,
+                                        float hifactor_2,
                                         float lofactor_2)
-        {        
+        {
+            // Debug: Capture driver initialized status
+            g_driver_initialized = m_initialized ? 1.0f : 0.0f;
+
             if(!m_initialized)
             {
                 return;
@@ -258,26 +270,35 @@ class StepperDriver
             float duty_cycle_2B(0.0f);
 
             // DEBUG: Track U_beta value to understand why duty_cycle_2B is non-zero
-            extern volatile float g_debug_U_beta;
-            extern volatile float g_debug_U_beta_clamped;
             g_debug_U_beta = U_beta;  // Store original value
+
+            // Debug: Capture values before clamping
+            g_U_alpha_before_clamp = U_alpha;
+            g_U_beta_before_clamp = U_beta;
+            g_voltage_limit_debug = m_voltage_limit;
 
             U_alpha = symetric_clamp(U_alpha, m_voltage_limit);
             U_beta  = symetric_clamp(U_beta,  m_voltage_limit);
-            
+
             // WORKAROUND: If U_beta has a DC offset (positive most of the time),
             // we can add a phase shift by swapping the sign or adding an offset
             // This is a temporary fix - the root cause should be fixed in the FOC calculation
             // TEST: Try inverting U_beta to see if this centers it better
             // U_beta = -U_beta;  // Uncomment to test inversion
-            
+
             g_debug_U_beta_clamped = U_beta;  // Store clamped value
+
+            // Debug: Capture calculation steps
+            g_power_supply_voltage_debug = m_power_supply_voltage;
 
             float duty_cycle_alpha = m_duty_cycle_limit.result(
                                                 fabs(U_alpha)/m_power_supply_voltage);
-            
+
             float duty_cycle_beta  = m_duty_cycle_limit.result(
                                                 fabs(U_beta) /m_power_supply_voltage);
+
+            g_duty_cycle_alpha_raw = duty_cycle_alpha;
+            g_duty_cycle_beta_raw = duty_cycle_beta;
 
             //-------------------------------------------------
             // Only energize one side of alpha channel H-bridge
@@ -285,7 +306,7 @@ class StepperDriver
             // Initialize both to zero first
             duty_cycle_1A = 0.0f;
             duty_cycle_1B = 0.0f;
-            
+
             // CRITICAL: Check U_alpha sign to determine which channel should be active
             // When U_alpha >= 0: 1B should be active, 1A should be 0
             // When U_alpha < 0: 1A should be active, 1B should be 0
@@ -301,7 +322,7 @@ class StepperDriver
                 duty_cycle_1A = duty_cycle_alpha * lofactor_1;
                 duty_cycle_1B = 0.0f;  // CRITICAL: Force 1B to zero
             }
-            
+
             // FINAL SAFETY CHECK: Double-check that inactive channel is exactly 0.0f
             // This is redundant but ensures no floating point issues
             if(U_alpha >= 0.0f)
@@ -316,19 +337,14 @@ class StepperDriver
             // Only energize one side of beta channel H-bridge
             // CRITICAL: Use >= 0.0f to ensure zero and positive go to 2B, negative goes to 2A
             // DEBUG: Track which branch we're taking
-            extern volatile bool g_debug_U_beta_positive;
-            extern volatile float g_debug_duty_cycle_beta;
-            extern volatile float g_debug_hifactor_2;
-            extern volatile float g_debug_lofactor_2;
-            
             g_debug_duty_cycle_beta = duty_cycle_beta;
             g_debug_hifactor_2 = hifactor_2;
             g_debug_lofactor_2 = lofactor_2;
-            
+
             // Initialize both to zero first
             duty_cycle_2A = 0.0f;
             duty_cycle_2B = 0.0f;
-            
+
             // CRITICAL: Check U_beta sign to determine which channel should be active
             // When U_beta >= 0: D6 (2B) should be active, D7 (2A) should be 0
             // When U_beta < 0: D7 (2A) should be active, D6 (2B) should be 0
@@ -343,10 +359,10 @@ class StepperDriver
             {
                 g_debug_U_beta_positive = false;
                 // U_beta is negative: activate D7 (2A), D6 (2B) must be zero
-                duty_cycle_2A = duty_cycle_beta * lofactor_2; 
+                duty_cycle_2A = duty_cycle_beta * lofactor_2;
                 duty_cycle_2B = 0.0f;  // CRITICAL: Force 2B to zero
             }
-            
+
             // FINAL SAFETY CHECK: Double-check that inactive channel is exactly 0.0f
             // This is redundant but ensures no floating point issues
             if(U_beta >= 0.0f)
@@ -359,6 +375,12 @@ class StepperDriver
             }
             //-------------------------------------------------
 
+            // Debug: Capture final duty cycles before hardware write
+            g_duty_1A_before_hw = duty_cycle_1A;
+            g_duty_1B_before_hw = duty_cycle_1B;
+            g_duty_2A_before_hw = duty_cycle_2A;
+            g_duty_2B_before_hw = duty_cycle_2B;
+
             g_dutycycle_1A = duty_cycle_1A;
             g_dutycycle_1B = duty_cycle_1B;
             g_dutycycle_2A = duty_cycle_2A;
@@ -368,18 +390,18 @@ class StepperDriver
                             duty_cycle_1B,
                             duty_cycle_2A,
                             duty_cycle_2B);
-            
+
             return;
         }
 
 
 
-        
+
         //---------------------------------------------------------------------
         //                         set_pwm_duty_cycle
         //---------------------------------------------------------------------
         void set_pwm_duty_cycle(float U_alpha, float U_beta)
-        {        
+        {
             if(!m_initialized)
             {
                 return;
@@ -395,7 +417,7 @@ class StepperDriver
 
             float duty_cycle_alpha = m_duty_cycle_limit.result(
                                                 fabs(U_alpha)/m_power_supply_voltage);
-            
+
             float duty_cycle_beta  = m_duty_cycle_limit.result(
                                                 fabs(U_beta) /m_power_supply_voltage);
 
@@ -431,7 +453,7 @@ class StepperDriver
                             duty_cycle_1B,
                             duty_cycle_2A,
                             duty_cycle_2B);
-            
+
             return;
         }
 
@@ -445,23 +467,23 @@ class StepperDriver
             {
                 return 0;
             }
-            
+
             // Safety check: ensure timer handle is valid
             if(m_p_htim_phase_1 == nullptr || m_p_htim_phase_1->Instance == nullptr)
             {
                 return 0;
             }
-            
+
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_1);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
-            
+
             // Clamp to ARR to prevent overflow
             if(ccr_value > autoReloadValue)
             {
                 ccr_value = autoReloadValue;
             }
-            
+
             return ccr_value;
         }
 
@@ -475,30 +497,30 @@ class StepperDriver
             {
                 return 0;
             }
-            
+
             // Safety check: ensure timer handle is valid
             if(m_p_htim_phase_2 == nullptr || m_p_htim_phase_2->Instance == nullptr)
             {
                 return 0;
             }
-            
+
             uint32_t autoReloadValue = __HAL_TIM_GET_AUTORELOAD(m_p_htim_phase_2);
             float    ccr_f(duty_cycle * static_cast<float>(autoReloadValue));
             uint32_t ccr_value (static_cast<uint32_t>(ccr_f));
-            
+
             // Clamp to ARR to prevent overflow
             if(ccr_value > autoReloadValue)
             {
                 ccr_value = autoReloadValue;
             }
-            
+
             return ccr_value;
         }
 
 
         void handle_status( uint32_t status)
         {
-     #if 0       
+     #if 0
             // TODO: HAL_StatusTypeDef
             if(HAL_OK == status)
             {
@@ -511,10 +533,10 @@ class StepperDriver
                 sprintf(char_buffer, "Error: %ld\r\n", status);
                 HAL_UART_Transmit(&huart2, reinterpret_cast<uint8_t *>(char_buffer), strlen(char_buffer), HAL_MAX_DELAY);
             }
-      #endif      
+      #endif
         }
 
-        
+
         //---------------------------------------------------------------------
         //                       set_dutycycles
         //---------------------------------------------------------------------
@@ -525,19 +547,19 @@ class StepperDriver
             {
                 return;
             }
-            
+
             // Safety check: ensure timer handles are valid before proceeding
             if(m_p_htim_phase_1 == nullptr || m_p_htim_phase_1->Instance == nullptr ||
                m_p_htim_phase_2 == nullptr || m_p_htim_phase_2->Instance == nullptr)
             {
                 return;  // Exit early if timers not initialized
             }
-            
+
             // DEBUG: Simple marker to verify function is being called
             volatile static uint32_t call_count = 0;
             call_count++;
             (void)call_count;  // Prevent optimization
-            
+
             uint32_t ccr_value_1A = get_ccr_value_phase_1(_1A);
             uint32_t ccr_value_1B = get_ccr_value_phase_1(_1B);
 
@@ -559,7 +581,7 @@ class StepperDriver
             if (HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2) != HAL_OK) {
                 Error_Handler();  // Handle error if stopping fails
             }
-            
+
             if (HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_1) != HAL_OK) {
                 Error_Handler();  // Handle error if stopping fails
             }
@@ -576,17 +598,17 @@ class StepperDriver
             }
 			#endif
             //-----------------------------------------------------------
-           
+
             // Temporarily comment out to test if this is causing the crash
             // If system runs without crashing, the issue is in these calls
-            __HAL_TIM_SET_COMPARE(m_p_htim_phase_1, 
-                                  m_timer_channel_phase_1A, 
+            __HAL_TIM_SET_COMPARE(m_p_htim_phase_1,
+                                  m_timer_channel_phase_1A,
                                   ccr_value_1A);
-            
-            __HAL_TIM_SET_COMPARE(m_p_htim_phase_1, 
-                                  m_timer_channel_phase_1B, 
+
+            __HAL_TIM_SET_COMPARE(m_p_htim_phase_1,
+                                  m_timer_channel_phase_1B,
                                   ccr_value_1B);
-                                            
+
             // Use direct register writes for both TIM8 channels for consistency
             // This ensures both channels are written the same way
             if(m_p_htim_phase_2 != nullptr && m_p_htim_phase_2->Instance != nullptr)
@@ -599,14 +621,14 @@ class StepperDriver
             else
             {
                 // Fallback to HAL macro if handle is invalid
-                __HAL_TIM_SET_COMPARE(m_p_htim_phase_2, 
-                                      m_timer_channel_phase_2A, 
+                __HAL_TIM_SET_COMPARE(m_p_htim_phase_2,
+                                      m_timer_channel_phase_2A,
                                       ccr_value_2A);
                 __HAL_TIM_SET_COMPARE(m_p_htim_phase_2,
                                       m_timer_channel_phase_2B,
                                       ccr_value_2B);
             }
-            
+
             //-----------------------------------------------------------
             // DIAGNOSTIC: Verify CCR values and timer configuration for D6 (PC7, TIM8_CH2)
             // This helps debug why D6 stays high when it should be low
@@ -619,23 +641,23 @@ class StepperDriver
                     // 1. Check if CCR2 is actually being set to 0
                     volatile uint32_t actual_ccr2 = m_p_htim_phase_2->Instance->CCR2;
                     volatile uint32_t actual_ccr1 = m_p_htim_phase_2->Instance->CCR1;
-                    
+
                     // 2. Check CCER register - verify CC2E is enabled and CC2NE (complementary) is disabled
                     volatile uint32_t ccer_tim8 = m_p_htim_phase_2->Instance->CCER;
                     volatile bool cc2e = (ccer_tim8 & TIM_CCER_CC2E) != 0;      // Should be 1
                     volatile bool cc2ne = (ccer_tim8 & TIM_CCER_CC2NE) != 0;     // Should be 0 (complementary disabled)
                     volatile bool cc2p = (ccer_tim8 & TIM_CCER_CC2P) != 0;       // Polarity bit
-                    
+
                     // 3. Check CCMR1 register - verify OC2M is PWM1 mode (0b110 = 6)
                     volatile uint32_t ccmr1_tim8 = m_p_htim_phase_2->Instance->CCMR1;
                     volatile uint32_t oc2m = (ccmr1_tim8 & TIM_CCMR1_OC2M) >> 8U; // Should be 6 for PWM1
-                    
+
                     // 4. Check BDTR register - verify MOE (Main Output Enable) and OSSR/OSSI
                     volatile uint32_t bdtr_tim8 = m_p_htim_phase_2->Instance->BDTR;
                     volatile bool moe = (bdtr_tim8 & TIM_BDTR_MOE) != 0;
                     volatile bool ossr = (bdtr_tim8 & TIM_BDTR_OSSR) != 0;
                     volatile bool ossi = (bdtr_tim8 & TIM_BDTR_OSSI) != 0;
-                    
+
                     // 5. Check GPIO configuration for PC7 (only if GPIOC is accessible)
                     volatile uint32_t pc7_af = 0;
                     volatile uint32_t pc7_mode = 0;
@@ -644,7 +666,7 @@ class StepperDriver
                         pc7_af = (GPIOC->AFR[0] >> (7 * 4)) & 0xF; // Should be 3 (AF3_TIM8)
                         pc7_mode = (GPIOC->MODER >> (7 * 2)) & 0x3; // Should be 2 (Alternate function)
                     }
-                    
+
                     // DEBUG VARIABLES: These are global so you can monitor them continuously
                     // Add to watch window and use "Live Watch" feature in your debugger
                     extern volatile uint32_t g_debug_ccr2b_written;
@@ -652,14 +674,14 @@ class StepperDriver
                     extern volatile float g_debug_duty2b;
                     extern volatile bool g_debug_cc2ne_enabled;
                     extern volatile uint32_t g_debug_ccer_value;
-                    
+
                     // Update global debug variables (can be monitored in real-time)
                     g_debug_ccr2b_written = ccr_value_2B;
                     g_debug_ccr2b_actual = actual_ccr2;
                     g_debug_duty2b = _2B;
                     g_debug_cc2ne_enabled = cc2ne;
                     g_debug_ccer_value = ccer_tim8;
-                    
+
                     // Also track phase_2A (D7) for comparison
                     extern volatile uint32_t g_debug_ccr2a_written;
                     extern volatile uint32_t g_debug_ccr2a_actual;
@@ -667,17 +689,8 @@ class StepperDriver
                     g_debug_ccr2a_written = ccr_value_2A;
                     g_debug_ccr2a_actual = actual_ccr1;  // TIM8_CH1 is CCR1
                     g_debug_duty2a = _2A;
-                    
-                    // DEBUG TRIGGER: Set this to 1 in debugger when you want to inspect
-                    // Then use debugger's "Pause" button (not breakpoint) to stop
-                    if(g_debug_trigger != 0)
-                    {
-                        // Safe inspection point - use debugger pause button here
-                        // All debug variables are updated and ready to inspect
-                        volatile uint32_t hold = g_debug_trigger;
-                        (void)hold;
-                    }
-                    
+
+
                     // Optional: Log problem cases via UART (uncomment if needed)
                     #if 0
                     if(_2B == 0.0f && actual_ccr2 != 0)
@@ -690,7 +703,7 @@ class StepperDriver
                         HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 10);
                     }
                     #endif
-                    
+
                     // Prevent optimization
                     (void)actual_ccr1;
                     (void)cc2e;
@@ -713,36 +726,36 @@ class StepperDriver
 
             // If needed, start the base timer again
             status = HAL_TIM_Base_Start(&htim1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
             // Restart TIM1 PWM channels
             status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
             status = HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
 
-            
+
             __HAL_RCC_TIM8_CLK_ENABLE();
 
             status = HAL_TIM_Base_Start(&htim8);
 
             if(HAL_OK != status) { Error_Handler(); }
-            
+
             // Restart TIM8 PWM channels
             status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
             status = HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2);
-            
+
             if(HAL_OK != status) { Error_Handler(); }
 
-            
+
 
 
             // Force the main output enable for TIM1 and TIM8 if using advanced features
@@ -752,8 +765,8 @@ class StepperDriver
 
             //-----------------------------------------------------------
 
-               
-            
+
+
             // Trigger update event if preload is enabled
             //TIM1->EGR |= TIM_EGR_UG;
 #else
@@ -773,21 +786,21 @@ class StepperDriver
 #endif
 
         }
-        
+
     private:
 
          TIM_HandleTypeDef* m_p_htim_phase_1;
          TIM_HandleTypeDef* m_p_htim_phase_2;
-         
+
          float              m_power_supply_voltage;
          uint32_t           m_timer_channel_phase_1A;
          uint32_t           m_timer_channel_phase_1B;
          uint32_t           m_timer_channel_phase_2A;
          uint32_t           m_timer_channel_phase_2B;
-         
+
          Limit<float>       m_duty_cycle_limit;
          Limit<float>       m_voltage_supply_limit;
-         
+
          float              m_voltage_limit;
          bool               m_initialized;
     };

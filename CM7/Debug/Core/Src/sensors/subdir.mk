@@ -5,13 +5,16 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 CPP_SRCS += \
-../Core/Src/sensors/AS5048A.cpp 
+../Core/Src/sensors/AS5048A.cpp \
+../Core/Src/sensors/velocity_test_diagnostics.cpp 
 
 OBJS += \
-./Core/Src/sensors/AS5048A.o 
+./Core/Src/sensors/AS5048A.o \
+./Core/Src/sensors/velocity_test_diagnostics.o 
 
 CPP_DEPS += \
-./Core/Src/sensors/AS5048A.d 
+./Core/Src/sensors/AS5048A.d \
+./Core/Src/sensors/velocity_test_diagnostics.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
@@ -21,7 +24,7 @@ Core/Src/sensors/%.o Core/Src/sensors/%.su Core/Src/sensors/%.cyclo: ../Core/Src
 clean: clean-Core-2f-Src-2f-sensors
 
 clean-Core-2f-Src-2f-sensors:
-	-$(RM) ./Core/Src/sensors/AS5048A.cyclo ./Core/Src/sensors/AS5048A.d ./Core/Src/sensors/AS5048A.o ./Core/Src/sensors/AS5048A.su
+	-$(RM) ./Core/Src/sensors/AS5048A.cyclo ./Core/Src/sensors/AS5048A.d ./Core/Src/sensors/AS5048A.o ./Core/Src/sensors/AS5048A.su ./Core/Src/sensors/velocity_test_diagnostics.cyclo ./Core/Src/sensors/velocity_test_diagnostics.d ./Core/Src/sensors/velocity_test_diagnostics.o ./Core/Src/sensors/velocity_test_diagnostics.su
 
 .PHONY: clean-Core-2f-Src-2f-sensors
 

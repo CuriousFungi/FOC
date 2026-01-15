@@ -1,0 +1,340 @@
+================================================================================
+HIGH-SPEED MOTOR TUNING - QUICK FIX CHECKLIST
+================================================================================
+
+PROBLEM: Motor spins fast initially, hits rough patch, then stops completely
+CAUSE: Back-EMF compensation insufficient at high speeds
+SOLUTION: Increase permanent magnet flux linkage constant
+
+================================================================================
+IMMEDIATE FIX (5 minutes)
+================================================================================
+
+STEP 1: Edit StepperMotor.cpp
+────────────────────────────────────────────────────────────────────────────
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~396
+
+FIND THIS LINE:
+,     PERM_MAGNET_FLUX_LINKAGE(0.005f) // 5 milliWebers
+
+CHANGE TO (try this first):
+,     PERM_MAGNET_FLUX_LINKAGE(0.010f) // 10 milliWebers - DOUBLED for high speed
+
+OR (if 0.010 still stops):
+,     PERM_MAGNET_FLUX_LINKAGE(0.015f) // 15 milliWebers - TRIPLED
+
+OR (if motor becomes unstable):
+,     PERM_MAGNET_FLUX_LINKAGE(0.007f) // 7 milliWebers - intermediate value
+
+
+STEP 2: Rebuild and Flash
+────────────────────────────────────────────────────────────────────────────
+
+☐ Clean build
+☐ Rebuild project
+☐ Flash to board
+
+
+STEP 3: Test Motor
+────────────────────────────────────────────────────────────────────────────
+
+☐ Start motor at low speed (5 rad/s)
+☐ Gradually increase to 20 rad/s
+☐ Continue to 30 rad/s if successful
+☐ Check for smooth operation throughout
+
+
+SUCCESS CRITERIA:
+✓ Motor accelerates smoothly without stopping
+✓ No rough patches at any speed
+✓ Reaches commanded speed and holds it
+✓ Lower current draw than before
+
+FAILURE INDICATORS:
+✗ Still stops at same speed → Increase flux linkage more
+✗ Becomes unstable/oscillates → Reduce flux linkage slightly
+✗ Won't start at all → Flux linkage too high, reduce
+
+
+================================================================================
+WHAT THIS FIX DOES
+================================================================================
+
+Back-EMF (counter-voltage) increases with speed:
+  V_bemf = K_e × speed × pole_pairs
+
+At high speed, need more voltage to overcome back-EMF:
+  V_total = I×R + V_bemf
+
+If K_e (flux linkage) is underestimated:
+  → Controller thinks back-EMF is lower than reality
+  → Doesn't apply enough voltage
+  → Current drops, torque drops, motor stops
+
+By increasing flux linkage constant:
+  → Controller estimates higher back-EMF
+  → Applies more voltage to compensate
+  → Motor maintains current and torque at high speed
+
+
+================================================================================
+DIAGNOSTIC VARIABLES TO MONITOR
+================================================================================
+
+Add these to STM32CubeMonitor to verify fix:
+
+BEFORE/AFTER COMPARISON:
+☐ g_kalman_velocity                 → Should reach higher speeds
+☐ g_m_voltage_q_in_controller       → Should increase with speed
+☐ g_desired_voltage_q_before_clamp  → Should NOT saturate at voltage_limit
+☐ g_amperage_q                      → Should maintain ~1-2A at high speed
+
+FEEDFORWARD CHECK:
+☐ g_base_voltage_q_feedforward      → Should be 70-90% of total voltage
+☐ g_feedback_voltage_correction     → Should be small (< 20% of total)
+
+SPEED CHECK:
+☐ g_target_rps_to_cl_controller     → Commanded speed
+☐ g_kalman_velocity                 → Actual speed (should match target)
+
+
+================================================================================
+BINARY SEARCH FOR OPTIMAL VALUE
+================================================================================
+
+If 0.010 doesn't work perfectly, use binary search:
+
+Starting point: 0.005 (current, TOO LOW)
+Upper bound:    0.020 (maximum reasonable)
+
+Test 1: 0.010  → Still stops at 25 rad/s
+Test 2: 0.015  → Runs to 35 rad/s but oscillates slightly
+Test 3: 0.012  → Perfect! Smooth to 40 rad/s
+
+OPTIMAL: 0.012 Wb
+
+
+================================================================================
+ALTERNATIVE VALUES TO TRY
+================================================================================
+
+Value (Wb)   | Back-EMF at 30 rad/s | When to Use
+─────────────────────────────────────────────────────────────────────
+0.005        | 7.5V                 | Current (too low)
+0.007        | 10.5V                | Slight increase
+0.010        | 15.0V                | RECOMMENDED FIRST TRY
+0.012        | 18.0V                | If 0.010 not quite enough
+0.015        | 22.5V                | High back-EMF motor
+0.020        | 30.0V                | Maximum (rarely needed)
+
+Note: Back-EMF at 30 rad/s mechanical = flux × 30 × 50 pole_pairs
+
+
+================================================================================
+ADDITIONAL QUICK FIXES (if flux linkage alone doesn't work)
+================================================================================
+
+FIX A: Increase Voltage Limit
+────────────────────────────────────────────────────────────────────────────
+
+File: project3/CM7/Core/Src/main_cpp.cpp
+Line: ~126
+
+CHANGE FROM:
+                                     20.0f,         // voltage limit
+                                     20.0f,         // power supply voltage
+
+CHANGE TO (if you have 24V supply):
+                                     24.0f,         // voltage limit
+                                     24.0f,         // power supply voltage
+
+⚠️ WARNING: Check L298N driver and motor ratings before increasing!
+
+
+FIX B: Reduce PI Gains at High Speed
+────────────────────────────────────────────────────────────────────────────
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~2649
+
+FIND:
+    const float Kp_velocity = 0.5f;
+    const float Ki_velocity = 2.0f;
+
+CHANGE TO (lower for high-speed stability):
+    const float Kp_velocity = 0.2f;
+    const float Ki_velocity = 1.0f;
+
+
+FIX C: Verify Phase Resistance
+────────────────────────────────────────────────────────────────────────────
+
+File: project3/CM7/Core/Src/main_cpp.cpp
+Line: ~124
+
+CURRENT:
+                                     1.4f,           // phase resistance
+
+MEASURE with multimeter between motor phases, should be ~1.4Ω DC
+If different, update this value
+
+
+================================================================================
+PROPER MEASUREMENT (30 minutes - do this after quick fix works)
+================================================================================
+
+METHOD 1: Back-EMF Measurement
+────────────────────────────────────────────────────────────────────────────
+
+1. Disconnect motor from driver (no power)
+2. Connect oscilloscope to phase A and phase B
+3. Spin motor by hand at known speed (or use drill)
+4. Measure peak-to-peak voltage on scope
+5. Calculate:
+
+   Speed (rad/s) = measured RPM × 2π / 60
+   Electrical speed = mechanical speed × 50 pole_pairs
+   K_e = V_peak-to-peak / (√2 × electrical_speed)
+
+Example:
+  Measured: 10V peak-to-peak at 200 RPM
+  Speed = 200 × 2π / 60 = 20.94 rad/s mechanical
+  Elec speed = 20.94 × 50 = 1047 electrical rad/s
+  K_e = 10 / (1.414 × 1047) = 0.00675 Wb
+
+
+METHOD 2: Coast-Down Test
+────────────────────────────────────────────────────────────────────────────
+
+1. Run motor at high speed in software
+2. Set voltage to 0 (let motor coast down)
+3. Monitor g_as5048_angle and phase voltages
+4. Measure generated voltage vs speed
+5. Plot V_bemf vs speed, calculate K_e from slope
+
+
+================================================================================
+EXPECTED RESULTS
+================================================================================
+
+BEFORE FIX:
+  Speed: 0 → 10 rad/s     ✓ Runs smoothly
+  Speed: 10 → 20 rad/s    ⚠ Gets rough
+  Speed: 20 → 30 rad/s    ✗ Stops completely
+  Current: High (>2A)
+  Efficiency: Poor
+
+AFTER FIX (with correct flux linkage):
+  Speed: 0 → 10 rad/s     ✓ Runs smoothly
+  Speed: 10 → 20 rad/s    ✓ Runs smoothly
+  Speed: 20 → 30 rad/s    ✓ Runs smoothly
+  Speed: 30 → 40 rad/s    ✓ Runs smoothly (if voltage allows)
+  Current: Moderate (1-1.5A)
+  Efficiency: Good
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+PROBLEM: Motor still stops at same speed after increasing flux linkage
+────────────────────────────────────────────────────────────────────────────
+
+DIAGNOSIS: Voltage saturation
+CHECK: g_desired_voltage_q_before_clamp vs g_m_voltage_q_in_controller
+If desired > actual → hitting voltage limit
+
+SOLUTIONS:
+1. Increase voltage limit (if supply supports it)
+2. Increase flux linkage even more
+3. Reduce maximum speed target
+4. Check power supply sag under load
+
+
+PROBLEM: Motor becomes unstable/oscillates after increasing flux linkage
+────────────────────────────────────────────────────────────────────────────
+
+DIAGNOSIS: Overcompensation or high PI gains
+CHECK: g_feedback_voltage_correction oscillating
+
+SOLUTIONS:
+1. Reduce flux linkage slightly (try 0.008 instead of 0.010)
+2. Reduce PI gains (Kp = 0.2, Ki = 1.0)
+3. Add low-pass filter on velocity error
+
+
+PROBLEM: Motor won't start at all after increasing flux linkage
+────────────────────────────────────────────────────────────────────────────
+
+DIAGNOSIS: Flux linkage too high for low speeds
+CHECK: Startup current and voltage
+
+SOLUTIONS:
+1. Reduce flux linkage (try 0.007)
+2. Check startup boost voltage (MIN_VOLTAGE_THRESHOLD)
+3. May need different value at low vs high speed
+
+
+================================================================================
+TIME ESTIMATES
+================================================================================
+
+Quick fix (change one constant):     5 minutes
+Test and verify:                     10 minutes
+Binary search for optimal:           20 minutes
+Proper back-EMF measurement:         30 minutes
+Full tuning with gain scheduling:    60 minutes
+────────────────────────────────────────────────────────
+TOTAL to get motor working:          15 minutes
+TOTAL for optimal performance:       1 hour
+
+
+================================================================================
+RECOMMENDED SEQUENCE
+================================================================================
+
+1. ☐ Try PERM_MAGNET_FLUX_LINKAGE = 0.010f
+2. ☐ Rebuild and test
+3. ☐ If still stops, try 0.015f
+4. ☐ If unstable, try 0.007f
+5. ☐ Binary search to optimal value
+6. ☐ Measure actual back-EMF for verification
+7. ☐ Update documentation with final value
+
+START WITH STEP 1 - DOUBLE THE FLUX LINKAGE TO 0.010! 🎯
+
+
+================================================================================
+PHYSICS EXPLANATION
+================================================================================
+
+Why higher flux linkage helps:
+
+Motor equation at high speed:
+  V_applied = I×R + ω×(L×I + Ψ_magnet)
+              ↑       ↑
+           resistive  back-EMF
+             drop
+
+Where:
+  Ψ_magnet = PERM_MAGNET_FLUX_LINKAGE
+  ω = electrical speed (rad/s)
+
+At 30 rad/s mechanical with 50 pole pairs:
+  ω_electrical = 1500 rad/s
+
+If Ψ = 0.005 Wb:
+  V_bemf = 1500 × 0.005 = 7.5V
+
+If Ψ = 0.010 Wb:
+  V_bemf = 1500 × 0.010 = 15.0V
+
+Controller uses Ψ to predict back-EMF and apply correct voltage.
+Wrong Ψ → wrong voltage → motor stops!
+
+
+================================================================================
+END OF QUICK FIX GUIDE
+================================================================================

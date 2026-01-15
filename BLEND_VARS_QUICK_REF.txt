@@ -1,0 +1,84 @@
+================================================================================
+BLEND RATIO MONITORING - QUICK REFERENCE
+================================================================================
+
+Add these variables to STM32CubeMonitor to visualize open-loop → closed-loop transition:
+
+================================================================================
+PRIMARY BLEND VARIABLES (Add these first!)
+================================================================================
+
+g_hybrid_blend_factor              → Blend ratio (0.0=open-loop, 1.0=closed-loop)
+g_hybrid_measured_speed            → Speed used for blend calculation (rad/s)
+g_open_loop_elec_before_blend      → Open-loop electrical angle (rad)
+g_closed_loop_elec_before_blend    → Closed-loop (encoder) electrical angle (rad)
+g_blended_angle_before_rate_limit  → Blended angle result (rad)
+g_blended_angle_after_rate_limit   → Final angle after rate limiting (rad)
+
+================================================================================
+SUPPORTING VARIABLES
+================================================================================
+
+g_cached_encoder_angle             → Raw encoder electrical angle (rad)
+g_as5048_angle                     → Encoder mechanical angle (0 to 2π per rotation)
+g_kalman_velocity                  → Kalman-filtered velocity (rad/s)
+g_target_rps_to_cl_controller      → Target speed command (rad/s)
+g_angle_change_limited             → Rate limiter delta angle (rad)
+
+================================================================================
+WHAT TO EXPECT
+================================================================================
+
+Startup (Speed < 10 rad/s):
+  g_hybrid_blend_factor = 0.0
+  Using pure open-loop angle accumulation
+
+Transition (Speed 10-20 rad/s):
+  g_hybrid_blend_factor smoothly increases 0.0 → 1.0
+  Blended angle transitions between open and closed loop
+
+Running (Speed > 20 rad/s):
+  g_hybrid_blend_factor = 1.0
+  Using pure encoder-based closed-loop control
+
+================================================================================
+THRESHOLDS (defined in StepperMotor.cpp line ~2745)
+================================================================================
+
+SPEED_THRESHOLD_LOW  = 10.0 rad/s  (fully open-loop below this)
+SPEED_THRESHOLD_HIGH = 20.0 rad/s  (fully closed-loop above this)
+
+Blend formula:
+  blend_factor = (speed - 10.0) / (20.0 - 10.0)
+
+================================================================================
+VISUALIZATION TIPS
+================================================================================
+
+1. Plot g_hybrid_blend_factor on its own Y-axis (0-1 range)
+2. Overlay g_hybrid_measured_speed to correlate blend with speed
+3. Show open vs closed loop angles in different colors
+4. Watch for smooth transition - no discontinuities or jumps
+5. Verify rate limiter isn't overly active during steady operation
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Blend stuck at 0.0?
+  → Check if speed reaches 10 rad/s threshold
+  → Verify g_kalman_velocity is updating
+
+Angle jump during transition?
+  → Check difference between open/closed angles before blend
+  → Should be < 0.785 rad (π/4) for smooth transition
+
+Blend oscillating?
+  → Speed may be oscillating around 10 or 20 rad/s thresholds
+  → Consider adding hysteresis
+
+Rate limiter always active?
+  → Check g_angle_change_limited magnitude
+  → May need to adjust rate limit threshold
+
+================================================================================

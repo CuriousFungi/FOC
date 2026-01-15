@@ -65,16 +65,16 @@ class AS5048A
 {
  public:
 
-    
+
     // declare the static members
     static constexpr size_t SPI_BUFFER_SIZE = 20;  // 500 uS/25uS
     static uint32_t spi_timestamp_buffer[SPI_BUFFER_SIZE];
-    static uint16_t spi_angle_buffer[SPI_BUFFER_SIZE]; 
-    
-    static uint16_t spi_index_curr ;     
-    static uint16_t spi_index_prev ;      
+    static uint16_t spi_angle_buffer[SPI_BUFFER_SIZE];
 
-    
+    static uint16_t spi_index_curr ;
+    static uint16_t spi_index_prev ;
+
+
     static  bool   clear_error_in_progress;
     //-------------------------------------------------------------------------
     //                              CTOR
@@ -90,7 +90,7 @@ class AS5048A
     //-------------------------------------------------------------------------
     //                              get_radians_per_second
     //-------------------------------------------------------------------------
-    //float get_radians_per_second(); 
+    //float get_radians_per_second();
 
 
     //-------------------------------------------------------------------------
@@ -99,19 +99,23 @@ class AS5048A
     bool error_detected();
 
     void check_health();
-    
-    //void reinit_dma_for_spi(); 
+
+    //void reinit_dma_for_spi();
     void   start_spi_conversion();
 
     uint16_t get_errors();
     void     clear_error();
     uint8_t  get_diagnostic();
-    
+
     float    get_mechanical_phase_angle_radians();
+    float    get_mechanical_velocity_rad_per_sec() const { return m_kalman_radians_per_sec; }
+
+    float get_kalman_electrical_angle_radians(float sensor_offset, float elec_zero_offset, float num_pole_pairs);
+
 
     float    read_angle_radians();
     bool     is_sample_valid(uint16_t value){return (0 == (value & 0x4000));}
-    
+
     void     invert_output(bool invert);
     bool     is_direction_invert(){return m_invert_output;} // Temporary bridge
 
@@ -122,27 +126,33 @@ class AS5048A
     bool     async_read_complete(){return m_spi_async_read_complete;}
     void     set_async_read_complete(){m_spi_async_read_complete = true;}
     void     spi_reset_in_progress(){m_spi_reset_in_progress = true;}
-   // float    read_angle_radians_from_buffer();
+    float    read_angle_radians_from_buffer();
     float    read_radians_with_direction();
     void     async_read_angle();
     uint16_t get_count(){return spi_angle_buffer[spi_index_prev];}
-    
+
     bool     fetch_radians(float &result);
+
+    // Store validated reading from ISR
+    void     store_validated_reading(uint16_t raw_value);
+
+    // Fetch validated reading (for use outside ISR, e.g., alignment)
+    bool     fetch_validated_reading(float &result);
 
     uint32_t calculate_time_difference(uint32_t current_timestamp, uint32_t last_timestamp);
 
     enum class AS5048A_REGISTERS : uint16_t
     {
         NOP                         = 0x0000, // Read Only
-        CLEAR_ERROR_FLAG            = 0x0001, // Read Only  
+        CLEAR_ERROR_FLAG            = 0x0001, // Read Only
         PROGRAMMING_CONTROL         = 0x0003, // R/W
         OTP_REG_ZERO_POSN_HI_8_BITS = 0x0016, // R/W/Prog
         OTP_REG_ZERO_POSN_LO_6_BITS = 0x0017, // R/W/Prog
         DIAG_AND_AGC                = 0x3FFD, // Read Only
         MAGNITUDE_14_BITS           = 0x3FFE, // Read Only
-        ANGLE_14_BITS               = 0x3FFF  
+        ANGLE_14_BITS               = 0x3FFF
     };
-        
+
     uint8_t  spiCalcEvenParity(uint16_t value);
 
     private:
@@ -166,9 +176,9 @@ class AS5048A
     const uint16_t     COUNTS_PER_REVOLUTION;
     const uint16_t     COUNTS_PER_HALF_REVOLUTION;
     const uint16_t     AS5048_MAX;
-    
+
     SPI_HandleTypeDef* m_hspi;                // SPI handle
-    
+
     uint16_t           m_position_count;
     bool               m_error_detected;
     uint32_t           m_prev_timestamp_microseconds;
@@ -177,15 +187,15 @@ class AS5048A
     int32_t            m_prev_full_rotations;
 
     float              m_min_elapsed_time;
-    
+
     float              m_velocity;
-    
+
     long               m_prev_angle_timestamp_us;    // timestamp of last call to get_accumulated_radians, used for velocity
     float              m_prev_radians_per_sec;       // angle at last call to get_radians_per_second, used for velocity
     long               m_prev_velocity_timestamp_us; // last velocity calculation timestamp
 
     uint32_t           m_prev_microseconds;
-    
+
     // Kalman filter for optimal velocity estimation
     KalmanFilter2D     m_kalman_filter;
     bool               m_invert_output;
@@ -193,6 +203,17 @@ class AS5048A
    //uint8_t            spi_current_index;  // Index to track the circular buffer
     volatile bool       m_spi_async_read_complete;  // PRP try to disable the cache on this
    bool                 m_spi_reset_in_progress;
+
+   float m_kalman_radians_per_sec;
+   float m_as5048_radians_per_sec;
+
+   // Stable validated reading for non-ISR use (e.g., alignment)
+   volatile uint16_t m_last_valid_raw_u16;      // Last known-good raw reading
+   volatile bool     m_has_valid_reading;       // Flag: at least one valid read occurred
+   volatile uint32_t m_valid_reading_timestamp; // When last valid reading occurred (microseconds)
+
+   volatile float m_prev_measured_angle;
+   volatile uint32_t m_prev_measured_angle_timestamp_us;
 
    public:
 

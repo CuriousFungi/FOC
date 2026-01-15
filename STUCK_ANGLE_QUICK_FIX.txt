@@ -1,0 +1,279 @@
+================================================================================
+STUCK ANGLE BUG - IMMEDIATE ACTION CHECKLIST
+================================================================================
+
+PROBLEM: All electrical angles stuck at 4.82 rad, motor running rough
+
+CAUSE: Blending code not executing - likely early return in control loop
+
+================================================================================
+STEP 1: ADD DIAGNOSTIC VARIABLES (30 seconds)
+================================================================================
+
+Open STM32CubeMonitor and add these variables:
+
+HIGH PRIORITY (add these first):
+☐ g_debug_epsilon_trigger_count     ← Is early return happening?
+☐ g_debug_actual_target_rps         ← What is target speed?
+☐ g_update_speed_cl_call_count      ← Is function being called?
+☐ g_loopfoc_update_count            ← Is loopFOC running?
+
+MEDIUM PRIORITY (if above look OK):
+☐ g_encoder_mech_angle_raw          ← What mechanical angle is control seeing?
+☐ g_encoder_elec_angle_raw          ← Electrical before offset
+☐ g_encoder_elec_after_offset       ← Electrical after offset
+
+RUN MOTOR FOR 5 SECONDS, THEN ANALYZE:
+
+================================================================================
+STEP 2: DIAGNOSE FROM VARIABLE BEHAVIOR (2 minutes)
+================================================================================
+
+SCENARIO A: g_debug_epsilon_trigger_count is RAPIDLY INCREASING
+→ DIAGNOSIS: Early return is active, blending code bypassed
+→ GO TO FIX #1
+
+SCENARIO B: g_update_speed_cl_call_count is NOT INCREASING
+→ DIAGNOSIS: update_speed_closed_loop() not being called
+→ CHECK: Motion control mode setting
+→ GO TO FIX #4
+
+SCENARIO C: g_encoder_mech_angle_raw is STUCK (but g_as5048_angle changes)
+→ DIAGNOSIS: Two different sensor read paths exist
+→ GO TO FIX #3
+
+SCENARIO D: All counters increasing, angles still stuck
+→ DIAGNOSIS: Logic error in angle calculation
+→ GO TO FIX #2
+
+================================================================================
+FIX #1: DISABLE EPSILON CHECK (Most Likely Fix)
+================================================================================
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~2525-2539
+
+FIND THIS CODE:
+```
+    if (fabsf(actual_target_rps) < EPSILON_SPEED_RPS)
+    {
+        g_debug_epsilon_trigger_count++;
+        m_voltage.q = 0.0f;
+        m_voltage.d = 0.0f;
+        setPhaseVoltage(m_voltage.q, m_voltage.d, 0.0f);
+        return;  // ← THIS IS THE PROBLEM!
+    }
+```
+
+CHANGE TO:
+```
+    #if 0  // TEMPORARY: Disable epsilon check to debug stuck angles
+    if (fabsf(actual_target_rps) < EPSILON_SPEED_RPS)
+    {
+        g_debug_epsilon_trigger_count++;
+        m_voltage.q = 0.0f;
+        m_voltage.d = 0.0f;
+        setPhaseVoltage(m_voltage.q, m_voltage.d, 0.0f);
+        return;
+    }
+    #endif
+```
+
+REBUILD, FLASH, TEST.
+→ If angles now update, this was the problem!
+
+================================================================================
+FIX #2: INCREASE INITIAL RAMPED SPEED
+================================================================================
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~2483
+
+FIND THIS CODE:
+```
+static float ramped_speed = 0.001f;  // Start at 0.001 rad/s
+```
+
+CHANGE TO:
+```
+static float ramped_speed = 1.0f;  // Start at 1.0 rad/s (well above epsilon)
+```
+
+REBUILD, FLASH, TEST.
+→ This ensures ramp starts above epsilon threshold immediately
+
+================================================================================
+FIX #3: USE CACHED ENCODER DIRECTLY (Bypass Blending)
+================================================================================
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~2952
+
+FIND THIS CODE:
+```
+    setPhaseVoltage(m_voltage.q,
+                    m_voltage.d,
+                    electrical_angle_radians);
+```
+
+CHANGE TO:
+```
+    // TEMPORARY: Use cached encoder angle directly (bypass blending)
+    extern volatile float g_cached_encoder_angle;
+    setPhaseVoltage(m_voltage.q,
+                    m_voltage.d,
+                    g_cached_encoder_angle);
+```
+
+REBUILD, FLASH, TEST.
+→ This tests if encoder path works, bypassing all blend logic
+
+================================================================================
+FIX #4: FORCE BLEND FACTOR = 1.0 (Test Closed-Loop)
+================================================================================
+
+File: project3/CM7/Core/Src/motors/StepperMotor.cpp
+Line: ~2748-2764
+
+FIND THIS CODE:
+```
+    float blend_factor = 0.0f;
+    if (measured_speed < SPEED_THRESHOLD_LOW)
+    {
+        blend_factor = 0.0f;
+    }
+    else if (measured_speed > SPEED_THRESHOLD_HIGH)
+    {
+        blend_factor = 1.0f;
+    }
+    else
+    {
+        blend_factor = (measured_speed - SPEED_THRESHOLD_LOW) /
+                       (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW);
+    }
+```
+
+CHANGE TO:
+```
+    // TEMPORARY: Force pure closed-loop for testing
+    float blend_factor = 1.0f;  // Override - always use encoder
+
+    /* Disabled for testing
+    if (measured_speed < SPEED_THRESHOLD_LOW)
+    {
+        blend_factor = 0.0f;
+    }
+    else if (measured_speed > SPEED_THRESHOLD_HIGH)
+    {
+        blend_factor = 1.0f;
+    }
+    else
+    {
+        blend_factor = (measured_speed - SPEED_THRESHOLD_LOW) /
+                       (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW);
+    }
+    */
+```
+
+REBUILD, FLASH, TEST.
+→ This tests closed-loop path only
+
+================================================================================
+EXPECTED RESULTS AFTER FIX
+================================================================================
+
+BEFORE FIX (Current Behavior):
+  g_closed_loop_elec_before_blend    = 4.82 (constant)
+  g_open_loop_elec_before_blend      = 4.82 (constant)
+  g_blended_angle_after_rate_limit   = 4.82 (constant)
+  g_loopfoc_encoder_read_debug       = 4.82 (constant)
+  Motor: ROUGH, vibrating, poor performance
+
+AFTER FIX (Expected Behavior):
+  g_closed_loop_elec_before_blend    = 0→2π sawtooth pattern
+  g_open_loop_elec_before_blend      = 0→2π sawtooth pattern
+  g_blended_angle_after_rate_limit   = 0→2π sawtooth pattern
+  g_loopfoc_encoder_read_debug       = 0→2π sawtooth pattern
+  Motor: SMOOTH, quiet, good torque
+
+================================================================================
+RECOMMENDED FIX ORDER
+================================================================================
+
+1. TRY FIX #1 FIRST (disable epsilon check)
+   → 90% probability this is the issue
+
+2. If #1 doesn't work, TRY FIX #2 (increase initial ramp)
+   → 8% probability
+
+3. If #1 and #2 don't work, TRY FIX #3 (use cached encoder directly)
+   → This bypasses the problem, confirms hardware works
+
+4. If nothing works, ADD ALL DIAGNOSTIC VARIABLES and analyze more
+
+================================================================================
+WHY THIS HAPPENS
+================================================================================
+
+The code has an early return that exits update_speed_closed_loop() if
+the target speed is below 0.0001 rad/s:
+
+  if (actual_target_rps < 0.0001) return;
+
+The ramped_speed starts at 0.001 rad/s and increments by:
+  ACCEL_RATE × delta_seconds = 1.0 × 0.001 = 0.001 rad/s per iteration
+
+During startup, ramped_speed hovers around the epsilon threshold (0.0001),
+causing the early return to trigger repeatedly.
+
+When the early return executes:
+  - Blending code never runs
+  - Angle variables never update
+  - Last valid angle (4.82 rad) remains frozen
+  - Motor commutates at FIXED angle → terrible performance
+
+SOLUTION: Ensure ramped_speed starts ABOVE epsilon or disable the check.
+
+================================================================================
+VERIFICATION
+================================================================================
+
+After applying fix, verify:
+☐ g_closed_loop_elec_before_blend shows 0→2π sawtooth
+☐ g_open_loop_elec_before_blend shows 0→2π sawtooth
+☐ g_blended_angle_after_rate_limit shows 0→2π sawtooth
+☐ g_loopfoc_encoder_read_debug shows 0→2π sawtooth
+☐ Motor runs SMOOTHLY without vibration
+☐ Duty cycles show clean sinusoidal patterns
+☐ g_hybrid_blend_factor transitions 0.0 → 1.0
+
+If all above are true: BUG FIXED! ✓
+
+================================================================================
+TIME ESTIMATE
+================================================================================
+
+Diagnose:  5 minutes (add variables, run motor, analyze)
+Apply Fix: 2 minutes (edit code)
+Rebuild:   30 seconds (compile)
+Test:      1 minute (flash, run motor, verify)
+──────────────────────────────────────────────────
+TOTAL:     ~10 minutes to fix this bug
+
+================================================================================
+CONTACT FOR HELP
+================================================================================
+
+If none of the fixes work, provide these data points:
+
+1. Values of all diagnostic variables (g_debug_epsilon_trigger_count, etc.)
+2. Screenshot of angles over 5 seconds
+3. Value of g_as5048_angle (is it changing?)
+4. Value of m_target (what is commanded speed?)
+5. Motion control mode setting
+
+This will allow deeper diagnosis of the root cause.
+
+================================================================================
+END OF QUICK FIX GUIDE
+================================================================================

@@ -1,6 +1,6 @@
 /**
  *  @file StepperMotor.h
- * 
+ *
  */
 
 #ifndef STEPPER_MOTOR_H
@@ -18,7 +18,39 @@
 
 #include "AS5048A.hpp"
 
+//=============================================================================
+// EXTERN DECLARATIONS FOR DEBUG VARIABLES
+// These must be declared BEFORE including StepperDriver.hpp
+// because StepperDriver.hpp uses these variables
+//=============================================================================
+
+// Driver debug variables (used by StepperDriver.hpp)
+extern volatile float g_driver_initialized;
+extern volatile float g_U_alpha_before_clamp;
+extern volatile float g_U_beta_before_clamp;
+extern volatile float g_voltage_limit_debug;
+extern volatile float g_power_supply_voltage_debug;
+extern volatile float g_duty_cycle_alpha_raw;
+extern volatile float g_duty_cycle_beta_raw;
+extern volatile float g_duty_1A_before_hw;
+extern volatile float g_duty_1B_before_hw;
+extern volatile float g_duty_2A_before_hw;
+extern volatile float g_duty_2B_before_hw;
+extern volatile float g_debug_U_beta;
+extern volatile float g_debug_U_beta_clamped;
+extern volatile bool g_debug_U_beta_positive;
+extern volatile float g_debug_duty_cycle_beta;
+extern volatile float g_debug_hifactor_2;
+extern volatile float g_debug_lofactor_2;
+
+// Essential monitoring variables
+extern volatile float g_dutycycle_1A;
+extern volatile float g_dutycycle_1B;
+extern volatile float g_dutycycle_2A;
+extern volatile float g_dutycycle_2b;
+
 #include "StepperDriver.hpp"
+#include "TransitionManager.hpp"
 #include "foc_utils.hpp"
 #include "time_utils.hpp"
 #include "defaults.h"
@@ -53,7 +85,7 @@ extern "C" {
 #define BUFFER_SIZE 10              // Circular buffer size for moving window
 
 #if 0
-class OffsetEstimator 
+class OffsetEstimator
 {
 public:
     OffsetEstimator(size_t window_size)
@@ -61,10 +93,10 @@ public:
     {
     }
 
-    float update(float current_measurement) 
+    float update(float current_measurement)
     {
         // Update the window with the new measurement
-        if (window_.size() >= window_size_) 
+        if (window_.size() >= window_size_)
         {
             sum_ -= window_.front();
             window_.pop_front();
@@ -154,11 +186,11 @@ private:
  */
 enum class MOTION_CONTROL_TYPE : uint8_t
 {
-  TORQUE      = 0x00,    
+  TORQUE      = 0x00,
   OL_ANGLE    = 0x01,
-  CL_ANGLE    = 0x02,    
+  CL_ANGLE    = 0x02,
   OL_VELOCITY = 0x03,
-  CL_VELOCITY = 0x04   
+  CL_VELOCITY = 0x04
 };
 
 /**
@@ -204,7 +236,7 @@ public:
     float previous_error;
     float integral;
     float max_output;
-    
+
     PIDController2(float kp, float ki, float kd, float max_out)
         : Kp(kp), Ki(ki), Kd(kd), previous_error(0), integral(0), max_output(max_out) {}
 
@@ -333,6 +365,7 @@ class StepperMotor
     void update_buffers(uint16_t new_angle, uint32_t new_timestamp){m_sensor.update_buffers(new_angle,new_timestamp);}
     void start_spi_conversion(){m_sensor.start_spi_conversion();}
     void spi_reset_in_progress(){m_sensor.spi_reset_in_progress();}
+    void store_validated_reading(uint16_t raw_value){m_sensor.store_validated_reading(raw_value);}
 
     void update_target_rad_per_sec(float rps);
     void control_loop_25us();
@@ -366,8 +399,8 @@ class StepperMotor
     float mechanical_to_electrical_radians(float mechanical_radians)
     {
         return mechanical_radians * NUM_POLE_PAIRS;
-    } 
-    
+    }
+
     void update_torque_open_loop(float target_quadrature_voltage, float delta_t, float delta_target);
 
 
@@ -397,14 +430,14 @@ class StepperMotor
     bool is_clockwise();
 
     float calculate_velocity(float current_angle, float delta_seconds);
-    
+
     struct Sample get_current_sample(){return m_current_sample;}
     void set_async_read_complete(){m_sensor.set_async_read_complete();}
   private:
 
-    void compute_inverse_park_transform( 
-                                    float Uq, 
-                                    float Ud, 
+    void compute_inverse_park_transform(
+                                    float Uq,
+                                    float Ud,
                                     float electric_angle);
 
 
@@ -412,9 +445,9 @@ class StepperMotor
     float get_electric_angle_radians();       // from FOCMotor::
 
 
-  
+
     float get_filtered_shaft_angle();
-  
+
     //-------------------------------------------------------------------------
     //                          alignSensor
     //
@@ -423,6 +456,13 @@ class StepperMotor
     //-------------------------------------------------------------------------
     bool alignSensor();
 
+    //-------------------------------------------------------------------------
+    //                           kickstartMotor
+    //
+    // Force motor through 90 degree rotation to break static friction
+    // Called after alignSensor to get motor moving for closed-loop control
+    //-------------------------------------------------------------------------
+    void kickstartMotor();
     //bool determine_sensor_direction();             // replacement for alignSensor
 
     //-------------------------------------------------------------------------
@@ -432,24 +472,24 @@ class StepperMotor
     // return true if found
     //-------------------------------------------------------------------------
     //bool absoluteZeroSearch();
-        
-    // Open loop motion control    
+
+    // Open loop motion control
     /**
      * Function (iterative) generating open loop movement for target velocity
      * it uses voltage_limit variable
-     * 
+     *
      * @param target_velocity - rad/s
      */
    // float velocityOpenloop(float target_velocity);
     /**
      * Function (iterative) generating open loop movement towards the target angle
      * it uses voltage_limit and velocity_limit variables
-     * 
+     *
      * @param target_angle - rad
      */
     float angleOpenloop(float target_angle);
 
-    
+
     // private function used to determine if encoder has index
 
 
@@ -466,53 +506,60 @@ class StepperMotor
     //
     // Return angle in range [0, TWO_PI)
     //-------------------------------------------------------------------------
+    // float normalize_radians(float radians)
+    // {
+    //     float a = fmod(radians, TWO_PI);
+
+    //     return a < 0 ? a + TWO_PI : a;
+    // }
     float normalize_radians(float radians)
     {
-        float a = fmod(radians, TWO_PI);
-        
-        return a < 0 ? a + TWO_PI : a;
+        // For very large angles, fmod loses precision
+        // First reduce to a reasonable range
+        while (radians > TWO_PI) radians -= TWO_PI;
+        while (radians < 0.0f) radians += TWO_PI;
+        return radians;
     }
 
 
+    void clarkeTransform( float Ia,
+                                float  Ib,
+                                float& Ialpha,
+                                float& Ibeta);
 
-    void clarkeTransform( float Ia, 
-                                float  Ib, 
-                                float& Ialpha, 
-                                float& Ibeta); 
-    
-    void parkTransform(         float  Ialpha, 
-                                float  Ibeta, 
-                                float  theta, 
-                                float& Id, 
+    void parkTransform(         float  Ialpha,
+                                float  Ibeta,
+                                float  theta,
+                                float& Id,
                                 float& Iq);
-    
-    void transformCurrents( float Ia, 
-                                   float  Ib, 
-                                   float  encoderAngle, 
-                                   float& Id, 
+
+    void transformCurrents( float Ia,
+                                   float  Ib,
+                                   float  encoderAngle,
+                                   float& Id,
                                    float& Iq);
 
     float resistance(float electical_radians_per_second);
     float inductance(float electical_radians_per_second);
-    
-    float smooth_voltage_adjustment( float current_voltage, 
-                                                float desired_voltage, 
-                                                float smoothing_rate, 
+
+    float smooth_voltage_adjustment( float current_voltage,
+                                                float desired_voltage,
+                                                float smoothing_rate,
                                                 float delta_t);
-    
+
     float calculate_smoothing_rate(float target_electrical_rps);
 
-    const float         MY_PI; 
+    const float         MY_PI;
     const float         HALF_PI;
     const float         TWO_PI;
     const float         THREE_PI;
     const float         THREE_HALVES_PI;
     const float         RAD_PER_SEC_TO_REV_PER_MIN;
-    
+
     const float         NUM_POLE_PAIRS;              // altough an integer, its always used as a float
-    
+
     const float         KV_RPM_PER_VOLT;
-    const float         PHASE_RESISTANCE; 
+    const float         PHASE_RESISTANCE;
     const float         PHASE_RESISTANCE_INVERSE;
     const float         PHASE_INDUCTANCE;
     const float         PHASE_INDUCTANCE_INVERSE;
@@ -534,7 +581,7 @@ class StepperMotor
     const float         PERM_MAGNET_FLUX_LINKAGE;
 
     AS5048A             m_sensor;
-    StepperDriver       m_driver; 
+    StepperDriver       m_driver;
 
     // Phase voltages for inverse Park and Clarke transform
     float	            m_U_alpha;
@@ -543,13 +590,15 @@ class StepperMotor
     unsigned long                m_prev_open_loop_timestamp_us;
 
     // state variables
-    float               m_target;                  //!< current target value - depends of the controller
+    volatile float      m_target;                  //!< current target value - depends of the controller
     float               m_target_prev;
     unsigned long       m_target_prev_timestamp;
     float               m_feed_forward_velocity;   // TODO: this isn't really used
     float               m_shaft_angle;             //!< current motor angle
     float               m_shaft_rad_per_sec;
-    float               m_omega_mechanical_rps;          //!< current motor velocity 
+    float               m_omega_mechanical_rps;          //!< current motor velocity
+
+    float               m_current_electrical_radians;
 
     float               m_current_sp;              //!< target current ( q current )
     float               m_shaft_velocity_target;       //!< current target velocity
@@ -557,38 +606,38 @@ class StepperMotor
     DQVoltage_s         m_voltage;                 //!< current d and q voltage set to the motor
     DQVoltage_s         m_voltage_prev;
     DQCurrent_s         m_amperage;                 //!< m_amperage d and q current measured
-    DQCurrent_s         m_amperage_prev; 
+    DQCurrent_s         m_amperage_prev;
 
 
 
     // m_voltage_bemf should always be positive
     float               m_voltage_bemf;            //!< estimated backemf voltage (if provided KV constant)
-    
+
     // motor configuration parameters
     float               m_voltage_sensor_align;    //!< sensor and motor align voltage parameter
     float               m_velocity_index_search;   //!< target velocity for index search
-      
-    
+
+
     // limiting variables
     float               m_voltage_limit;           //!< Voltage limiting variable - global limit
     float               m_current_limit;           //!< Current limiting variable - global limit
     float               m_velocity_limit;          //!< Velocity limiting variable - global limit
-    
+
     // motor status vairables
     bool                m_enabled;                 //!< enabled or disabled motor flag
     FOC_MOTOR_STATUS    m_motor_status;            //!< motor status
-      
+
     // pwm modulation related variables
     FOC_MODULATION_TYPE m_foc_modulation;          //!<  parameter determining modulation algorithm
     int8_t              m_modulation_centered;     //!< flag (1) centered modulation around driver limit /2  or  (0) pulled to 0
-     
-    
+
+
     // configuration structures
     TORQUE_CONTROL_TYPE m_torque_control;          //!< parameter determining the torque control type
     MOTION_CONTROL_TYPE m_motion_control;          //!< parameter determining the control loop to be used
-   
+
     // controllers and low pass filters
-    
+
     PIDController       m_PID_amperage_q;           //!< parameter determining the q current PID config
     PIDController       m_PID_amperage_d;           //!< parameter determining the d current PID config
 
@@ -608,30 +657,30 @@ class StepperMotor
 
    // unsigned int        m_motion_downsample;       //!< parameter defining the ratio of downsampling for move commad
    // unsigned int        m_motion_cnt;              //!< counting variable for downsampling for move commad
-    
+
     // sensor related variabels
     float               m_sensor_offset;           //!< user defined sensor zero offset
     float               m_radian_offset_to_electric_zero;     //!< absolute zero electric angle - if available
     Direction           m_sensor_direction;        //!< default is CW. if sensor_direction == Direction::CCW then direction will be flipped compared to CW. Set to UNKNOWN to set by calibration
-    
-    
-    
+
+
+
      // Utility function intended to be used with serial plotter to monitor motor variables
      // significantly slowing the execution down!!!!
-    
+
     // TODO: move to another class start
     unsigned int        m_monitor_downsample;      //!< show monitor outputs each monitor_downsample calls
     char                m_monitor_start_char;      //!< monitor starting character
     char                m_monitor_end_char;        //!< monitor outputs ending character
     char                m_monitor_separator;       //!< monitor outputs separation character
     unsigned int        m_monitor_decimals;        //!< monitor outputs decimal places
-      
+
     // initial monitoring will display target, voltage, velocity and angle
     uint8_t             monitor_variables;         //!< Bit array holding the map of variables the user wants to monitor
     // TODO: move to another class end
-    
-    CurrentSense*       m_p_current_sense; 
-      
+
+    CurrentSense*       m_p_current_sense;
+
     // monitor counting variable
     unsigned int        m_monitor_cnt;             //!< counting variable
 
@@ -647,14 +696,35 @@ class StepperMotor
     float               m_measured_speed_radians_per_sec;
     float               m_measured_angle_radians;
 
-    
+
     float               m_target_voltage_q;
     float               m_accumulated_mechanical_radians; // For open-loop angle generation
+public:
+    volatile bool m_kickstart_active;
+    bool m_kickstart_finished;
+private:
+ bool m_force_use_encoder;
+ bool m_encoder_mode_locked;
+
+ AngleTransitionManager m_transition_manager;
+
+ bool should_use_accumulated_mode(uint32_t startup_begin_time, uint32_t current_time);
+ uint32_t compute_safe_elapsed_time(uint32_t start_time, uint32_t current_time);
+ float calculate_stable_encoder_angle(float kalman_position);
+
+ void handle_transition_to_encoder_mode(
+     float accumulated_angle,
+     float& velocity_error_integral,
+     float Kp_velocity_mech,
+     float Ki_velocity_mech,
+     float INTEGRAL_MAX,
+     float velocity_error_mech_rad_per_sec,
+     uint32_t current_time,
+     float target_mechanical_rad_per_sec,
+     float delta_seconds);
 
 
-   
     struct Sample      m_current_sample;
 };
-
 
 #endif // inclusion guard

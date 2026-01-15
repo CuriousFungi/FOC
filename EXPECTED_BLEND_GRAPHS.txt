@@ -1,0 +1,366 @@
+================================================================================
+EXPECTED BLEND RATIO MONITORING GRAPHS - VISUAL REFERENCE
+================================================================================
+
+This document shows what your STM32CubeMonitor graphs should look like when
+monitoring the blend ratio during motor startup.
+
+================================================================================
+GRAPH 1: COMPLETE STARTUP SEQUENCE (0-10 seconds)
+================================================================================
+
+Blend Factor (0-1)    Speed (rad/s)
+     ↓                    ↓
+1.0  ┤                    ┌────────────────────────────  50
+     │                   /
+     │                  /    ┌─ Target Speed            40
+0.8  ┤                 /    /
+     │                /    /                             30
+     │               /    /
+0.6  ┤              /    /    ┌─ Measured Speed (Kalman)
+     │             /    /    /                           20
+     │            /    /    /
+0.4  ┤           /    /    /
+     │          /    /    /                              10
+     │         /    /    /
+0.2  ┤        /    /    /
+     │       /    /    /                                 0
+     │  ────/────/────/
+0.0  ┤─────┘
+     └────┬────┬────┬────┬────┬────┬────┬────┬────┬────
+     0s   1s   2s   3s   4s   5s   6s   7s   8s   9s  10s
+
+     PHASE 1   PHASE 2   PHASE 3      PHASE 4
+     Align     Open-Loop  Transition   Closed-Loop
+               Accel      Blending     Steady State
+
+Legend:
+━━━━  Blend Factor (thick yellow line)
+─ ─   Target Speed (white dashed)
+····  Measured Speed (green dotted)
+
+
+Key Observations:
+- Blend = 0.0 from 0-3s (open-loop only)
+- Blend smoothly ramps 0.0→1.0 from 3-5s (transition)
+- Blend = 1.0 from 5s onward (closed-loop only)
+- Speed smoothly increases throughout
+- No oscillations or discontinuities
+
+================================================================================
+GRAPH 2: TRANSITION ZONE ZOOMED (3.0-5.0 seconds)
+================================================================================
+
+This is the critical 2-second window where control transitions from
+open-loop to closed-loop.
+
+Blend Factor (0-1)
+     ↓
+1.0  ┤                                        ●───────────
+     │                                      ╱
+     │                                    ╱
+0.9  ┤                                  ╱
+     │                                ╱
+     │                              ╱
+0.8  ┤                            ╱
+     │                          ╱
+     │                        ╱
+0.7  ┤                      ╱
+     │                    ╱
+     │                  ╱
+0.6  ┤                ╱
+     │              ╱
+     │            ╱
+0.5  ┤          ╱
+     │        ╱
+     │      ╱
+0.4  ┤    ╱
+     │  ╱
+     │╱
+0.3  ┤
+     │
+     │
+0.2  ┤
+     │
+     │
+0.1  ┤
+     │
+     │
+0.0  ●─────
+     └────┬────┬────┬────┬────┬────┬────┬────┬────┬────
+     3.0  3.2  3.4  3.6  3.8  4.0  4.2  4.4  4.6  4.8  5.0
+                         Time (seconds)
+
+Speed (rad/s)
+     ↓
+22   ┤                                        ●───────────
+     │                                      ╱
+20   ┤                                    ╱  ← HIGH threshold
+     │                                  ╱
+18   ┤                                ╱
+     │                              ╱
+16   ┤                            ╱
+     │                          ╱
+14   ┤                        ╱
+     │                      ╱
+12   ┤                    ╱
+     │                  ╱
+10   ┤                ╱  ← LOW threshold
+     │              ╱
+8    ┤            ╱
+     │          ╱
+6    ┤        ╱
+     │      ╱
+4    ┤    ╱
+     │  ╱
+2    ┤╱
+     │
+0    ●─────
+     └────┬────┬────┬────┬────┬────┬────┬────┬────┬────
+     3.0  3.2  3.4  3.6  3.8  4.0  4.2  4.4  4.6  4.8  5.0
+
+Key Observations:
+- At t=3.0s: speed=10 rad/s, blend=0.0
+- At t=4.0s: speed=15 rad/s, blend=0.5 (halfway)
+- At t=5.0s: speed=20 rad/s, blend=1.0
+- Perfect linear relationship!
+- Formula: blend = (speed - 10) / (20 - 10)
+
+================================================================================
+GRAPH 3: ANGLE BLENDING VISUALIZATION (3.5-4.5 seconds)
+================================================================================
+
+Shows how the three angles relate during transition.
+
+Angle (radians)
+     ↓
+6.0  ┤
+     │                                    ╱╲
+5.5  ┤                                  ╱    ╲
+     │                                ╱        ╲
+5.0  ┤                              ╱            ╲
+     │           ╱╲               ╱
+4.5  ┤         ╱    ╲           ╱     Closed-Loop Angle (blue)
+     │       ╱        ╲       ╱       ← from encoder
+4.0  ┤     ╱            ╲   ╱
+     │   ╱                ╲╱
+3.5  ┤ ╱                 ╱╲
+     │                 ╱    ╲         Blended Angle (green)
+3.0  ┤               ╱        ╲       ← weighted average
+     │             ╱            ╲
+2.5  ┤           ╱                ╲
+     │         ╱                    ╲
+2.0  ┤       ╱    Open-Loop Angle    ╲
+     │     ╱      (orange)              ╲
+1.5  ┤   ╱        ← accumulated          ╲
+     │ ╱                                    ╲
+1.0  ┤╱                                      ╲
+     └────┬────┬────┬────┬────┬────┬────┬────┬────┬────
+     3.5  3.6  3.7  3.8  3.9  4.0  4.1  4.2  4.3  4.4  4.5
+                         Time (seconds)
+
+Legend:
+━━━━  Blended Angle (green, thick)
+- - -  Open-Loop Angle (orange, dashed)
+·····  Closed-Loop Angle (blue, dotted)
+
+Key Observations:
+- All three angles track together (good alignment!)
+- Blended angle smoothly transitions between open and closed
+- Sawtooth pattern = electrical angle wrapping (0→2π→0)
+- No discontinuities = smooth transition
+
+================================================================================
+GRAPH 4: DUTY CYCLES DURING TRANSITION (4.0-4.2 seconds)
+================================================================================
+
+Duty cycles should remain smooth during blend transition.
+
+Duty Cycle (0-1)
+     ↓
+1.0  ┤
+     │       ╱╲           ╱╲           ╱╲
+0.9  ┤      ╱  ╲         ╱  ╲         ╱  ╲
+     │     ╱    ╲       ╱    ╲       ╱    ╲
+0.8  ┤    ╱      ╲     ╱      ╲     ╱      ╲
+     │   ╱        ╲   ╱        ╲   ╱        ╲
+0.7  ┤  ╱          ╲ ╱          ╲ ╱          ╲
+     │ ╱            ╲            ╱            ╲
+0.6  ┤╱              ╲          ╱              ╲
+     │                ╲        ╱                ╲
+0.5  ┤                 ╲      ╱                  ╲
+     │                  ╲    ╱
+0.4  ┤                   ╲  ╱
+     │                    ╲╱
+0.3  ┤
+     │
+0.2  ┤
+     │
+0.1  ┤
+     │
+0.0  ┤────────────────────────────────────────────────
+     └────┬────┬────┬────┬────┬────┬────┬────┬────┬────
+     4.00 4.02 4.04 4.06 4.08 4.10 4.12 4.14 4.16 4.18 4.20
+
+     Phase A  Phase B (similar, 90° shifted)
+
+Key Observations:
+- Smooth sinusoidal waveforms (no glitches)
+- Regular frequency throughout transition
+- No amplitude changes or distortion
+- Phase relationships maintained
+
+================================================================================
+PROBLEM GRAPHS - WHAT TO AVOID
+================================================================================
+
+BAD GRAPH 1: Oscillating Blend Factor
+────────────────────────────────────────────────────────
+
+Blend Factor
+     ↓
+1.0  ┤    ╱╲    ╱╲    ╱╲    ╱╲
+     │   ╱  ╲  ╱  ╲  ╱  ╲  ╱  ╲  ← OSCILLATING (BAD!)
+0.5  ┤  ╱    ╲╱    ╲╱    ╲╱    ╲
+     │ ╱
+0.0  ┤╱──────────────────────────
+     └──────────────────────────
+            Time
+
+Problem: Speed estimate oscillating around thresholds
+Solution: Add hysteresis or filter speed measurement
+
+
+BAD GRAPH 2: Stuck Blend Factor
+────────────────────────────────────────────────────────
+
+Blend Factor
+     ↓
+1.0  ┤
+     │
+0.5  ┤
+     │
+0.0  ┤──────────────────────────  ← STUCK AT ZERO (BAD!)
+     └──────────────────────────
+            Time
+
+Problem: Motor not reaching speed threshold
+Solution: Check speed measurement, increase target speed
+
+
+BAD GRAPH 3: Hard Switch
+────────────────────────────────────────────────────────
+
+Blend Factor
+     ↓
+1.0  ┤         ┌──────────────────
+     │         │  ← INSTANT JUMP (BAD!)
+0.5  ┤         │
+     │         │
+0.0  ┤─────────┘
+     └──────────────────────────
+            Time
+
+Problem: Threshold range too narrow
+Solution: Widen SPEED_THRESHOLD_LOW to HIGH range
+
+
+BAD GRAPH 4: Angle Discontinuity During Transition
+────────────────────────────────────────────────────────
+
+Angle (rad)
+     ↓
+6.0  ┤           ╱
+     │          ╱
+4.0  ┤         ╱
+     │        ╱
+2.0  ┤       ╱    ┌─────  ← JUMP! (BAD!)
+     │      ╱    ╱
+0.0  ┤─────┘────╱
+     └──────────────────────────
+            Time
+
+Problem: Open and closed angles misaligned
+Solution: Recalibrate encoder offset, check direction
+
+================================================================================
+MONITORING CHECKLIST
+================================================================================
+
+When monitoring blend transition, verify:
+
+Essential Variables:
+☐ g_hybrid_blend_factor (0.0 → 1.0 smoothly)
+☐ g_hybrid_measured_speed (increases smoothly)
+☐ g_kalman_velocity (matches measured_speed)
+
+Angle Variables:
+☐ g_open_loop_elec_before_blend (sawtooth pattern)
+☐ g_closed_loop_elec_before_blend (sawtooth pattern)
+☐ g_blended_angle_before_rate_limit (smooth transition)
+☐ Difference between open/closed < 0.5 rad before transition
+
+Duty Cycle Variables:
+☐ g_dutycycle_1A, 1B, 2A, 2b (all smooth sinusoids)
+☐ No glitches or discontinuities during transition
+☐ Amplitude remains stable
+
+Quality Checks:
+☐ No oscillations in blend_factor
+☐ Transition occurs in expected speed range (10-20 rad/s)
+☐ Motor runs smoothly (no audible noise or stutter)
+☐ Encoder angle increases continuously
+
+================================================================================
+TYPICAL TIMING VALUES
+================================================================================
+
+Phase                Duration    Blend Factor    Speed Range
+─────────────────────────────────────────────────────────────────
+Alignment            1.0 s       0.0             0 rad/s
+Open-Loop Accel      2.0 s       0.0             0-10 rad/s
+Transition           2.0 s       0.0 → 1.0       10-20 rad/s
+Closed-Loop          Continuous  1.0             >20 rad/s
+
+Total startup time: ~5 seconds
+
+================================================================================
+NUMERICAL EXAMPLE
+================================================================================
+
+Time    Speed    Blend    Open Angle   Closed Angle   Final Angle
+        (rad/s)  Factor   (rad)        (rad)          (rad)
+────────────────────────────────────────────────────────────────────
+2.0s    5.0      0.0      1.234        1.256          1.234
+3.0s    10.0     0.0      2.456        2.478          2.456
+3.5s    12.5     0.25     3.142        3.165          3.148
+4.0s    15.0     0.5      3.890        3.912          3.901
+4.5s    17.5     0.75     4.567        4.589          4.583
+5.0s    20.0     1.0      5.234        5.256          5.256
+6.0s    25.0     1.0      0.123        0.145          0.145
+
+Note how final angle smoothly transitions from matching open_angle
+to matching closed_angle as blend_factor increases!
+
+================================================================================
+SUMMARY
+================================================================================
+
+GOOD TRANSITION:
+✓ Blend factor: smooth 0.0 → 1.0 ramp
+✓ Speed: steady increase through thresholds
+✓ Angles: track together, no jumps
+✓ Duty cycles: smooth throughout
+✓ Motor: quiet, smooth operation
+
+BAD TRANSITION:
+✗ Blend factor: oscillating or stuck
+✗ Speed: erratic or not reaching threshold
+✗ Angles: discontinuities or large differences
+✗ Duty cycles: glitches or distortion
+✗ Motor: stuttering, noise, vibration
+
+ADD TO YOUR MONITOR: g_hybrid_blend_factor
+WATCH THE MAGIC: 0.0 → 1.0 smooth transition! ✨
+
+================================================================================

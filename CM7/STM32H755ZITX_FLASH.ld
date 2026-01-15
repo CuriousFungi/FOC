@@ -39,7 +39,7 @@ ENTRY(Reset_Handler)
 _estack = ORIGIN(RAM_D1) + LENGTH(RAM_D1); /* end of "RAM_D1" Ram type memory */
 
 _Min_Heap_Size = 0x200; /* required amount of heap  */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+_Min_Stack_Size = 0x4000; /* required amount of stack - increased to 16KB to prevent overflow */
 
 /* Memories definition */
 MEMORY
@@ -177,8 +177,8 @@ SECTIONS
     . = ALIGN(8);
   } >RAM_D1
 
- 
-  
+
+
   .dma_tx_buffer2  (NOLOAD) : /* 0x30040000 */
   {
 	. = ALIGN(32);          /* Ensure 4-byte alignment for the start of the buffer */

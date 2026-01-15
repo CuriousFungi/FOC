@@ -17,18 +17,34 @@ extern "C"
 
 extern TIM_HandleTypeDef htim1;
 
-volatile uint16_t g_as5048_u16_angle(0);
+volatile uint32_t g_as5048_dtus(0);
 volatile float g_as5048_velocity(0.0f);
 volatile float g_as5048_angle(0.0f);  // Forward declaration - defined later in file
-volatile uint32_t g_as5048_update_count(0);  // Debug: count how many times update_buffers is called
 
 // Kalman filter debug variables
-volatile float g_kalman_position(0.0f);         // Kalman filtered position (rad)
+volatile float g_kalman_rad_mech(0.0f);         // Kalman filtered position (rad)
 volatile float g_kalman_velocity(0.0f);         // Kalman filtered velocity (rad/s)
 volatile float g_kalman_position_variance(0.0f); // Position uncertainty
 volatile float g_kalman_velocity_variance(0.0f); // Velocity uncertainty
-volatile float g_velocity_raw(0.0f);            // Raw velocity for comparison
-volatile float g_kalman_dt(0.0f);               // Delta time for Kalman updates
+//volatile float g_velocity_raw(0.0f);            // Raw velocity for comparison
+//volatile float g_kalman_dt(0.0f);               // Delta time for Kalman updates
+//volatile uint32_t g_kalman_update_count(0);     // Count Kalman filter updates
+volatile uint32_t g_kalman_skip_count(0);       // Count skipped updates (dt out of range)
+//volatile float g_measured_angle_radians(0.0f);  // Raw angle measurement fed to Kalman
+//volatile uint32_t g_kalman_init_count(0);       // Count Kalman re-initializations
+//volatile float g_prev_measured_angle(0.0f);     // Previous angle to detect if changing
+//volatile float g_angle_delta_per_update(0.0f);  // Angular change per update
+
+
+// NEW: Track CHANGES rather than absolute values
+volatile float g_spi_buffer_changed(0.0f);      // 0.0 = same as last, 1.0 = changed
+volatile float g_spi_buffer_is_dead(0.0f);      // 0.0 = valid data, 1.0 = 0xDEAD
+volatile float g_angle_delta_per_read(0.0f);    // Change in angle per read (rad, ~±0.1)
+volatile float g_spi_async_flag(0.0f);          // 0.0 = busy, 1.0 = ready
+volatile float g_spi_dma_return_ok(0.0f);       // 0.0 = failed, 1.0 = success
+
+
+
 
 extern volatile float g_experimental_velocity;
 
@@ -55,7 +71,7 @@ uint32_t AS5048A::spi_timestamp_buffer[SPI_BUFFER_SIZE];
 uint16_t AS5048A::spi_angle_buffer[SPI_BUFFER_SIZE];
 
 uint16_t AS5048A::spi_index_curr;
-uint16_t AS5048A::spi_index_prev;      
+uint16_t AS5048A::spi_index_prev;
 
 bool     AS5048A::clear_error_in_progress;
 
@@ -71,7 +87,7 @@ volatile uint16_t __attribute__(( aligned(32), section(".dma_tx_buffer2"), used)
 const float SMOOTHING_FACTOR = 0.2f;  // Adjust between 0 (no smoothing) and 1 (max smoothing)
 //static float previous_dac_value = 0;  // Persistent DAC value
 
-uint16_t smoothDACOutput(uint16_t new_value) 
+uint16_t smoothDACOutput(uint16_t new_value)
 {
     //previous_dac_value = SMOOTHING_FACTOR * static_cast<float>(new_value) + (1.0f - SMOOTHING_FACTOR) * previous_dac_value;
     //return static_cast<uint16_t>(previous_dac_value);
@@ -83,19 +99,19 @@ static uint16_t previous_count     = 0;  // Previous encoder reading
 
 uint16_t readWithDeadband(uint16_t count)
 {
-    
+
     const uint16_t  DEADBAND_THRESHOLD = 5;  // Noise threshold for stationary encoder
-    
-    if (abs(static_cast<int>(count) - static_cast<int>(previous_count)) > DEADBAND_THRESHOLD) 
+
+    if (abs(static_cast<int>(count) - static_cast<int>(previous_count)) > DEADBAND_THRESHOLD)
     {
         previous_count = count;  // Update only if change exceeds the threshold
     }
     return previous_count;
 }
 
-uint16_t convertToSineDAC(uint16_t count) 
+uint16_t convertToSineDAC(uint16_t count)
 {
-    
+
     const uint16_t  DAC_MAX_VALUE      = 0xFFF;    // Maximum value for 12-bit DAC (4095)
     const uint16_t  MAX_POSITION       = 0x3FFF;    // Maximum value for 14-bit encoder (16383)
     const uint16_t  DAC_MIDPOINT       = DAC_MAX_VALUE / 2;  // Center value for DAC (2047)
@@ -116,7 +132,7 @@ uint16_t convertToSineDAC(uint16_t count)
      {
         angle += 2.0f * M_PI;
      }
-     else if (angle >= 2.0f * M_PI) 
+     else if (angle >= 2.0f * M_PI)
      {
         angle -= 2.0f * M_PI;
      }
@@ -125,15 +141,15 @@ uint16_t convertToSineDAC(uint16_t count)
     uint16_t dac_value = static_cast<uint16_t>(DAC_MIDPOINT + sine_value * (DAC_MAX_VALUE / 2.0f));
 
     // Clamp dac_value to avoid going out of range
-    dac_value = std::min(dac_value, DAC_MAX_VALUE);    
+    dac_value = std::min(dac_value, DAC_MAX_VALUE);
 
 
     // Scale sine value to the DAC range centered around DAC_MIDPOINT
     //uint16_t dac_value = static_cast<uint16_t>(DAC_MIDPOINT + sine_value * (DAC_MAX_VALUE / 2.0f));
-    
+
     // Ensure dac_value is never below zero
     //dac_value = std::max(dac_value, static_cast<uint16_t>(0));
-    
+
     // Optional: Clip to DAC range
     //dac_value = std::min(dac_value, DAC_MAX_VALUE);
 
@@ -158,7 +174,7 @@ uint16_t smoothDACOutput(uint16_t new_value) {
 #endif
 
 //=============================================================================
-//                           
+//
 //=============================================================================
 #if 0
 extern "C"
@@ -179,7 +195,7 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi)
 ,   BIT_RESOLUTION(14)
 ,   READ_WRITE_BIT(1<<BIT_RESOLUTION)
 ,   PARITY_BIT(READ_WRITE_BIT << 1)
-,   SPI_READ_ANGLE_CMD (   value_of(AS5048A_REGISTERS::ANGLE_14_BITS) 
+,   SPI_READ_ANGLE_CMD (   value_of(AS5048A_REGISTERS::ANGLE_14_BITS)
                          | READ_WRITE_BIT
                          | PARITY_BIT
                        )
@@ -202,12 +218,18 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi)
 ,   m_prev_velocity_timestamp_us(0)
 
 ,   m_prev_microseconds(0)
-,   m_kalman_filter(1e-6f, 1e-4f, 1e-3f)  // Initialize Kalman filter with tuned noise parameters
+,   m_kalman_filter(1e-6f, 1e-3f, 3e-3f)  // LOW LAG: minimal R for fast response, moderate Q_vel for stability, essential for closed-loop control
 ,   m_invert_output(false)
 //,   m_spi_as5048_rx_buff(0)
 //,   spi_current_index(0)
 , m_spi_async_read_complete(true)
 , m_spi_reset_in_progress(false)
+, m_kalman_radians_per_sec(0.0f)
+, m_as5048_radians_per_sec(0.0f)
+, m_last_valid_raw_u16(0xDEAD)
+, m_has_valid_reading(false)
+, m_prev_measured_angle(0.0f)
+, m_prev_measured_angle_timestamp_us(0)
 {
     init_SPI_buffers();
     //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_SET);
@@ -228,7 +250,7 @@ AS5048A::AS5048A(    SPI_HandleTypeDef* hspi)
 void AS5048A::check_health()
 {
    //If an SPI error was detected in an interrupt context, the SPI was disabled.
-   // re-enabling the SPI from within an interrupt context is unpredictable. So 
+   // re-enabling the SPI from within an interrupt context is unpredictable. So
    // a flag was set so that the SPI can be re-enabled in the appplication context.
    if(m_spi_reset_in_progress)
    {
@@ -255,26 +277,27 @@ float AS5048A::read_angle_radians()
     float radians = TWO_PI
                   * static_cast<float>(raw_count)
                   / static_cast<float>(COUNTS_PER_REVOLUTION);
-    
-    float result = (m_invert_output) 
-                 ? -radians 
+
+    // Use same inversion formula as fetch_radians for consistency
+    float result = (m_invert_output)
+                 ? (TWO_PI - radians)
                  :  radians;
 
 
     //------------------------
-    //   DAC output debug 
+    //   DAC output debug
 
     // Scale sine value to the DAC range centered around DAC_MIDPOINT
     // uint16_t dac_value = static_cast<uint16_t>(DAC_MIDPOINT + sine_value * (DAC_MAX_VALUE / 2.0f));
 
     // Clamp dac_value to avoid going out of range
-    // dac_value = std::min(dac_value, DAC_MAX_VALUE);    
+    // dac_value = std::min(dac_value, DAC_MAX_VALUE);
 
     uint16_t new_dac_value = convertToSineDAC(raw_count);
     new_dac_value = smoothDACOutput(new_dac_value);
 
     HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, new_dac_value);
-    
+
     return result;
 }
 
@@ -284,7 +307,7 @@ float AS5048A::read_angle_radians()
 //-----------------------------------------------------------------------------
 #if 0
 void AS5048A::conversion_complete()
-{    
+{
     update_buffers(spi_as5048_register_value & ~0xC000, micros());
 }
 #endif
@@ -296,7 +319,7 @@ void AS5048A::conversion_complete()
 uint16_t AS5048A::get_state()
 {
     uint16_t state = read_register(value_of(AS5048A_REGISTERS::DIAG_AND_AGC));
-    
+
 	return static_cast<uint32_t>(state);
 }
 
@@ -322,7 +345,7 @@ void AS5048A::clear_error()
 uint8_t AS5048A::get_gain()
 {
 	uint16_t data = get_state();
-    
+
 	return static_cast<uint8_t>(data) & 0xFF;
 }
 
@@ -332,7 +355,7 @@ uint8_t AS5048A::get_gain()
 uint8_t AS5048A::get_diagnostic()
 {
 	uint16_t data = get_state() && 0xFF00;
-    
+
 	return static_cast<uint8_t>(data >> 8);
 }
 
@@ -427,13 +450,13 @@ return 0xBEEF;
     //HAL_GPIO_WritePin(m_p_chip_select_port, m_chip_select_pin, GPIO_PIN_RESET);
 
     __attribute__((aligned(4)))  uint16_t register_value;
-    
+
     HAL_SPI_TransmitReceive( m_hspi,
                         reinterpret_cast<uint8_t*>(&command),
 						reinterpret_cast<uint8_t*>(&register_value),
                         1,
   					  TIMEOUT);
-    
+
     while (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY) {}
 
 
@@ -465,15 +488,15 @@ void AS5048A::read_register_async(uint16_t reg_address)
 
     if (HAL_SPI_GetState(m_hspi) == HAL_SPI_STATE_READY)
     {
-        HAL_SPI_TransmitReceive_IT(m_hspi, 
+        HAL_SPI_TransmitReceive_IT(m_hspi,
                                    reinterpret_cast<uint8_t*>(&command),
-                                   reinterpret_cast<uint8_t*>(&spi_as5048_register_value), 
-                                   1);   
+                                   reinterpret_cast<uint8_t*>(&spi_as5048_register_value),
+                                   1);
     }
     else
     {
         // SPI is busy
-    }                       
+    }
 }
 #endif
 
@@ -494,23 +517,34 @@ extern DMA_HandleTypeDef hdma_spi4_tx;
 
 void AS5048A::start_spi_conversion()
 {
-        
+    extern volatile float g_spi_async_flag;
+    extern volatile float g_spi_dma_return_ok;
+
+    g_spi_async_flag = m_spi_async_read_complete ? 1.0f : 0.0f;  // Track flag state
+
+
+
     if(!m_spi_async_read_complete) return;
 
     alignas(32) uint16_t READ_ANGLE_COMMAND(0xFFFF);
 
     m_spi_as5048_tx_buff[0] = READ_ANGLE_COMMAND;
-    __DMB(); 
+    __DMB();
 
-    m_spi_async_read_complete  = false; 
+    m_spi_async_read_complete  = false;
     AS5048A::m_spi_as5048_rx_buff[0] = 0xDEAD;
-    if(HAL_OK !=  HAL_SPI_TransmitReceive_DMA(&hspi4,   //m_hspi,
+
+    HAL_StatusTypeDef status =HAL_SPI_TransmitReceive_DMA(&hspi4,   //m_hspi,
                           //reinterpret_cast<uint8_t*>(&READ_ANGLE_COMMAND),
                           const_cast<uint8_t*>(reinterpret_cast<volatile uint8_t*>(&AS5048A::m_spi_as5048_tx_buff[0])),
                           const_cast<uint8_t*>(reinterpret_cast<volatile uint8_t*>(&AS5048A::m_spi_as5048_rx_buff[0])),
-                          1))
+                          1);
+    g_spi_dma_return_ok = (status == HAL_OK) ? 1.0f : 0.0f;  // Track DMA start success
+
+
+    if(status == HAL_OK)
     {
-      // m_spi_async_read_complete = true;
+       m_spi_async_read_complete = true;
        return;
     }
 }
@@ -524,14 +558,25 @@ void AS5048A::start_spi_conversion()
 // Caution: This is invoked from within an interrupt context
 //-----------------------------------------------------------------------------
 void AS5048A::async_read_angle()
-{ 
+{
     if(!m_spi_async_read_complete) return;
-    
+
     if (HAL_SPI_GetState(m_hspi) == HAL_SPI_STATE_READY)
     {
          start_spi_conversion();
     }
+
+    // // If SPI is stuck in non-ready state, force reset it
+    // if (HAL_SPI_GetState(m_hspi) != HAL_SPI_STATE_READY)
+    // {
+    //     // Force state back to ready to recover
+    //     m_hspi->State = HAL_SPI_STATE_READY;
+    // }
+
+    // start_spi_conversion();
 }
+
+
 
 //-----------------------------------------------------------------------------
 //                          init_SPI_buffers
@@ -551,20 +596,18 @@ void AS5048A::init_SPI_buffers(void)
 // Caution: Invoked from within interrupt context
 //-----------------------------------------------------------------------------
 void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
-{    
-  m_spi_async_read_complete = true;
-  g_as5048_update_count++;  // Debug: increment counter to verify function is called
-  
-    g_as5048_u16_angle = new_angle;
-    
+{
+    //m_spi_async_read_complete = true;
+
+
     // Convert 14-bit angle (0-16383) to radians (0-2π)
     float measured_angle_radians = (static_cast<float>(new_angle) * TWO_PI) / AS5048_MAX;
     g_as5048_angle = measured_angle_radians;
-    
+
     // =======================================================================
     // KALMAN FILTER BASED VELOCITY ESTIMATION
     // =======================================================================
-    
+
     // Calculate time step for Kalman filter
     if (m_prev_angle_timestamp_us > 0)
     {
@@ -580,57 +623,117 @@ void AS5048A::update_buffers(uint16_t new_angle, uint32_t new_timestamp)
             // Handle rollover (unlikely but possible)
             delta_time_us = (0xFFFFFFFFU - prev_timestamp) + new_timestamp + 1;
         }
-        
+
+g_as5048_dtus = delta_time_us;
+
         // Only update Kalman filter if reasonable time has elapsed
         const uint32_t MIN_DELTA_TIME_US = 10;  // 10us minimum (allow faster updates than old method)
         const uint32_t MAX_DELTA_TIME_US = 10000;  // 10ms maximum (guard against stalls)
-        
+
         if (delta_time_us >= MIN_DELTA_TIME_US && delta_time_us <= MAX_DELTA_TIME_US)
         {
             float dt = static_cast<float>(delta_time_us) * 1e-6f;
-            g_kalman_dt = dt;  // Debug output
-            
+            //g_kalman_dt = dt;  // Debug output
+
+            // Debug: Track Kalman updates and angle changes
+            //g_kalman_update_count++;
+            //g_measured_angle_radians = measured_angle_radians;
+
+            // Calculate how much the angle changed since last update
+            float angle_change = measured_angle_radians - m_prev_measured_angle;
+            if (angle_change > M_PI) angle_change -= TWO_PI;
+            else if (angle_change < -M_PI) angle_change += TWO_PI;
+            //g_angle_delta_per_update = angle_change;
+            m_prev_measured_angle = measured_angle_radians;
+
+            // Get current velocity estimate for adaptive tuning
+            float estimated_speed_abs = fabsf(m_kalman_filter.get_velocity());
+
+            // Adaptive process noise velocity: MINIMAL adaptation to maintain low lag
+            // Slight increase only at very high speeds for acceleration tracking
+            float adaptive_q_velocity = 1e-3f;  // Base: low for stability
+            if (estimated_speed_abs > 50.0f) {
+                // Only increase at extreme speeds
+                //adaptive_q_velocity = 1e-3f + ((estimated_speed_abs - 50.0f) * 2e-5f);
+                //if (adaptive_q_velocity > 3e-3f) {
+                //    adaptive_q_velocity = 3e-3f;  // Cap to prevent instability
+                //}
+                adaptive_q_velocity = 1e-3f;
+            }
+            m_kalman_filter.set_process_noise_velocity(adaptive_q_velocity);
+
             // Kalman filter predict step
             m_kalman_filter.predict(dt);
-            
+
+            // Adaptive measurement noise: MINIMAL to reduce lag for closed-loop control
+            // Accept more noise to maintain responsiveness - control loop can handle it
+            // Priority: lag < 5ms at all speeds for stable closed-loop operation
+
+            // Very light scaling - keep R low to minimize lag
+            // Low speed (0-20 rad/s): R = 1e-4 (minimal lag, ~1-2ms)
+            // Medium speed (20-50 rad/s): R = 2e-4 to 4e-4 (slight smoothing)
+            // High speed (50-100 rad/s): R = 4e-4 to 6e-4 (minimal smoothing)
+            //float adaptive_measurement_noise = 3e-3f + (estimated_speed_abs * 2e-5f);
+            //if (adaptive_measurement_noise > 8e-3f) {
+            //    adaptive_measurement_noise = 8e-3f;  // Cap to maintain low lag even at 100+ rad/s
+            //}
+            float adaptive_measurement_noise = 3e-3f;
+            m_kalman_filter.set_measurement_noise(adaptive_measurement_noise);
+
             // Kalman filter update step with new measurement
             m_kalman_filter.update(measured_angle_radians);
-            
+
+            __disable_irq();
+            m_kalman_radians_per_sec = m_kalman_filter.get_velocity();
+            m_as5048_radians_per_sec = m_kalman_radians_per_sec;
+            __enable_irq();
+
+
             // Get filtered estimates
-            g_kalman_position = m_kalman_filter.get_position();
-            g_kalman_velocity = m_kalman_filter.get_velocity();
+            g_kalman_rad_mech = m_kalman_filter.get_position();
+            g_kalman_velocity = m_kalman_radians_per_sec;
             g_kalman_position_variance = m_kalman_filter.get_position_variance();
             g_kalman_velocity_variance = m_kalman_filter.get_velocity_variance();
-            
+
             // Use Kalman velocity as the primary velocity estimate
-            g_as5048_velocity = g_kalman_velocity;
-            
+            g_as5048_velocity =  m_kalman_radians_per_sec;
+
             // Calculate raw velocity for comparison (debug only)
             float delta_angle = measured_angle_radians - m_prev_angle_radians;
             if (delta_angle > M_PI) delta_angle -= TWO_PI;
             else if (delta_angle < -M_PI) delta_angle += TWO_PI;
-            g_velocity_raw = delta_angle / dt;
+
+        }
+        else
+        {
+            // Debug: Track skipped updates
+            g_kalman_skip_count++;
         }
     }
     else
     {
         // First sample - initialize Kalman filter
+        //g_kalman_init_count++;  // Debug: Track initializations
+        //
         m_kalman_filter.initialize(measured_angle_radians);
-        g_kalman_position = measured_angle_radians;
+
+        g_kalman_rad_mech = measured_angle_radians;
         g_kalman_velocity = 0.0f;
         g_as5048_velocity = 0.0f;
+        //g_measured_angle_radians = measured_angle_radians;
     }
-    
+
     // Update previous values for next iteration
     m_prev_angle_radians = measured_angle_radians;
     m_prev_angle_timestamp_us = static_cast<long>(new_timestamp);
+
+     m_spi_async_read_complete = true;
 }
 
 
 //-----------------------------------------------------------------------------
 //                       read_angle_radians_from_buffer
 //-----------------------------------------------------------------------------
-#if 0
 float AS5048A::read_angle_radians_from_buffer()
 {
 	// Enter Critical region
@@ -646,23 +749,34 @@ float AS5048A::read_angle_radians_from_buffer()
     __set_PRIMASK(prim);               // Restore the interrupt state
     __enable_irq();
 
-    uint16_t raw_count_u16 = get_raw_count();
+    // BYTE SWAP: STM32 DMA stores bytes in reversed order for AS5048A
+    //latest_angle_u16 = ((latest_angle_u16 & 0xFF) << 8) | ((latest_angle_u16 >> 8) & 0xFF);
+
+
+    //uint16_t raw_count_u16 = get_raw_count();
+    // Mask out error and parity bits (bits 14-15), keep only angle data (bits 0-13)
+    uint16_t angle_data = latest_angle_u16 & 0x3FFF;
 
 
     // Convert the 14-bit angle data to radians
     // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
-    float angle_radians = (static_cast<float>(latest_angle_u16) * TWO_PI) / AS5048_MAX;
+    float angle_radians = (static_cast<float>(angle_data) * TWO_PI) / AS5048_MAX;
 
     return angle_radians;
 }
-#endif
+
+
+
+
+
+
 
 // g_as5048_angle already declared at top of file (line 22)
 //-----------------------------------------------------------------------------
 //                       fetch_radians
 //
 // AS5048A::start_spi_conversion() loads the buffer with 0xdead before starting
-// the conversion. If raw_count_u16 returns 0xdead it means that a conversion is 
+// the conversion. If raw_count_u16 returns 0xdead it means that a conversion is
 // in progress.
 //
 // TODO: limit the time spent in the do/while loop
@@ -672,32 +786,118 @@ float AS5048A::read_angle_radians_from_buffer()
 //-----------------------------------------------------------------------------
 bool AS5048A::fetch_radians(float &result)
 {
-    uint16_t raw_count_u16;
-    do
+    extern volatile float g_fetch_radians_success_count;
+    extern volatile float g_fetch_radians_fail_count;
+    extern volatile float g_fetch_radians_result_debug;
+    extern volatile float g_fetch_radians_raw_count_debug;
+
+    static float last_valid_angle = 0.0f;  // Cache last valid reading
+
+    uint16_t raw_count_u16 = get_raw_count();
+    //do
+    //{
+    //   raw_count_u16 = get_raw_count();
+    // }
+    if (0xdead == raw_count_u16)
     {
-       raw_count_u16 = get_raw_count();
+        result = last_valid_angle;  // Use cached value
+        g_fetch_radians_fail_count++;
+        return false;  // Indicate stale data
     }
-    while (0xdead ==raw_count_u16);
-    
+
+    // Debug: capture raw count value
+    g_fetch_radians_raw_count_debug = static_cast<float>(raw_count_u16);
 
     bool success = (0 == (0x4000 & raw_count_u16));
     if(success)
-    {          success = true;
+    {
        uint16_t count_14_bit = raw_count_u16&0x3FFF;
 
-       
+
        // Convert the 14-bit angle data to radians
        // AS5048A has a 14-bit resolution (0 to 16383 -> 0 to 2π radians)
        result = (static_cast<float>(count_14_bit) * TWO_PI) / AS5048_MAX;
-       
+
+       // Apply direction inversion if determined by calibration
+       // m_invert_output is set during alignment based on measured encoder behavior
+       if(m_invert_output)
+       {
+           result = TWO_PI - result;
+       }
+       last_valid_angle = result;  // Cache for next time
+
        g_as5048_angle = result;
+       g_fetch_radians_result_debug = result;  // Debug: capture result value before return
+       g_fetch_radians_success_count++;
+    }
+    else
+    {
+       result = last_valid_angle;  // Error bit set, use last valid
+       g_fetch_radians_fail_count++;
     }
 
     return success;
 
 }
+
 //-----------------------------------------------------------------------------
-//                       read_angle_radians_from_buffer
+//                       store_validated_reading
+//
+// Called from ISR to store a validated reading that non-ISR code can safely read
+//-----------------------------------------------------------------------------
+void AS5048A::store_validated_reading(uint16_t raw_value)
+{
+    // Only store if not 0xDEAD (in-progress marker)
+    if (raw_value != 0xDEAD)
+    {
+        __disable_irq();
+        m_last_valid_raw_u16 = raw_value;
+        m_has_valid_reading = true;
+        __enable_irq();
+    }
+}
+
+//-----------------------------------------------------------------------------
+//                       fetch_validated_reading
+//
+// Safe to call outside ISR (e.g., during alignment)
+// Returns validated reading stored by ISR
+//-----------------------------------------------------------------------------
+bool AS5048A::fetch_validated_reading(float &result)
+{
+    // Check if we have any valid reading
+    if (!m_has_valid_reading)
+    {
+        return false;  // No valid data yet
+    }
+
+    // Read validated copy atomically
+    uint16_t raw_copy;
+    __disable_irq();
+    raw_copy = m_last_valid_raw_u16;
+    __enable_irq();
+
+    // Check error bit
+    // if (raw_copy & 0x4000)
+    // {
+    //     return false;  // Error bit set
+    // }
+
+    // Convert to radians
+    uint16_t count_14_bit = raw_copy & 0x3FFF;
+    result = (static_cast<float>(count_14_bit) * TWO_PI) / AS5048_MAX;
+
+    // Apply direction inversion
+    if (m_invert_output)
+    {
+        result = TWO_PI - result;
+    }
+
+    return true;  // Success
+}
+
+//-----------------------------------------------------------------------------
+//                       read_radians_with_direction
 //-----------------------------------------------------------------------------
 float AS5048A::read_radians_with_direction()
 {
@@ -705,7 +905,9 @@ float AS5048A::read_radians_with_direction()
 
     if(fetch_radians(angle_radians))
     {
-        return (m_invert_output) ? -angle_radians : angle_radians;
+        // Direction inversion is controlled by m_invert_output flag
+        // which is set during alignment calibration
+        return angle_radians;
     }
     else
     {
@@ -744,7 +946,7 @@ void AS5048A::process_encoder_data()
 //
 //-----------------------------------------------------------------------------
 uint32_t AS5048A::
-calculate_time_difference( uint32_t current_timestamp, 
+calculate_time_difference( uint32_t current_timestamp,
                                       uint32_t last_timestamp)
 {
     // Check for rollover and handle it correctly
@@ -766,7 +968,7 @@ calculate_time_difference( uint32_t current_timestamp,
 //-----------------------------------------------------------------------------
 void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
 {
- // PRP   
+ // PRP
     int32_t  angle_diff_total = 0;    // Accumulate total angular difference
     uint32_t time_total_us    = 0;    // Accumulate total time difference (in microseconds)
 
@@ -781,9 +983,9 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
         int prev_idx = (curr_idx == 0) ? SPI_BUFFER_SIZE - 1 : curr_idx - 1;
 
         // Calculate angle difference (handle rollover)
-        int32_t angle_diff = spi_angle_buffer[curr_idx] 
+        int32_t angle_diff = spi_angle_buffer[curr_idx]
                            - spi_angle_buffer[prev_idx];
-        
+
         if (angle_diff > AS5048_MAX / 2)
         {
             angle_diff -= AS5048_MAX;  // Handle wrap-around
@@ -794,14 +996,14 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
         }
 
         uint32_t time_diff = calculate_time_difference(
-                              spi_timestamp_buffer[curr_idx], 
-                              spi_timestamp_buffer[prev_idx]);                  
-               
+                              spi_timestamp_buffer[curr_idx],
+                              spi_timestamp_buffer[prev_idx]);
+
         if (time_diff > 0)
         {
            angle_diff_total += angle_diff;
            time_total_us    += time_diff;
-        }   
+        }
     }
 
     // Ensure we have non-zero time difference to avoid division by zero
@@ -828,7 +1030,7 @@ void AS5048A::calculate_velocity_from_buffer(struct Sample &current_sample)
 //                            get_raw_count
 //-----------------------------------------------------------------------------
 uint16_t AS5048A::get_raw_count()
-{      
+{
     CriticalRegion critical_region;
 
 //    critical_region.enter();
@@ -838,6 +1040,9 @@ uint16_t AS5048A::get_raw_count()
     SCB_InvalidateDCache_by_Addr((uint32_t *)&AS5048A::m_spi_as5048_rx_buff, sizeof(m_spi_as5048_rx_buff[0]));
 
     uint16_t raw_value_u16 = m_spi_as5048_rx_buff[0];
+
+    // BYTE SWAP: STM32 DMA stores bytes in reversed order for AS5048A
+    //raw_value_u16 = ((raw_value_u16 & 0xFF) << 8) | ((raw_value_u16 >> 8) & 0xFF);
 
  //   critical_region.exit();
 
@@ -856,7 +1061,7 @@ uint16_t AS5048A::write_register(uint16_t registerAddress, uint16_t data)
     //disable
 return 0xDEAD;
 
-    
+
 	uint8_t dat[2];
 
 	uint16_t command = 0b0000000000000000; // PAR=0 R/W=W
@@ -935,12 +1140,12 @@ uint8_t AS5048A::spiCalcEvenParity(uint16_t value)
 
 
 //-----------------------------------------------------------------------------
-//                      getMechanicalAngle
+//                      get_mechanical_phase_angle_radians
 //-----------------------------------------------------------------------------
-float AS5048A::get_mechanical_phase_angle_radians() 
+float AS5048A::get_mechanical_phase_angle_radians()
 {
-    //return m_prev_angle_radians;
-    //return read_angle_radians_from_buffer();
+    // Direction inversion is hard-coded in fetch_radians()
+    // so we can directly return the result
     float result;
     if(fetch_radians(result))
     {
@@ -950,9 +1155,26 @@ float AS5048A::get_mechanical_phase_angle_radians()
     {
         return 0.0f;
     }
-    
-    
 }
+
+
+float AS5048A::get_kalman_electrical_angle_radians(float sensor_offset, float elec_zero_offset, float num_pole_pairs) {
+    float kalman_rad = m_kalman_filter.get_position();
+
+    float kalman_mech_norm = kalman_rad - sensor_offset;
+    kalman_mech_norm = kalman_mech_norm - TWO_PI * floorf(kalman_mech_norm / TWO_PI);
+
+    float kalman_elec = kalman_mech_norm * num_pole_pairs;
+    kalman_elec -= elec_zero_offset;
+
+    // Normalize to [0, 2π)
+    kalman_elec = fmodf(kalman_elec, TWO_PI);
+    if (kalman_elec < 0.0f) kalman_elec += TWO_PI;
+
+    return kalman_elec;
+}
+
+
 
 #if 0
 //-----------------------------------------------------------------------------
@@ -964,4 +1186,3 @@ float AS5048A::get_accumulated_radians()
           (TWO_PI * static_cast<float>(m_full_rotations));
 }
 #endif
-

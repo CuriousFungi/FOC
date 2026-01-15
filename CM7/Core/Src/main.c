@@ -36,7 +36,7 @@
 
 
 // Define ITM port 0 register address for printf redirection
-#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000)) 
+#define ITM_STIMULUS_PORT0    (*((volatile unsigned int*)0xE0000000))
 #define ITM_TRACE_EN          (*((volatile unsigned int*)0xE0000E00))
 
 enum {
@@ -87,7 +87,7 @@ extern "C" {
 #endif
 
 void cpp_main(void);
-void foc_iteration(void);      
+void foc_iteration(void);
 void wrapper_control_loop_25us(void);
 void wrapper_sample_as5048_25us(void);
 //void wrapper_reinit_dma_for_spi(void);
@@ -200,16 +200,16 @@ void RefreshWatchdog(void)
 //-----------------------------------------------------------------------------
 //                          DisableWatchdogs
 //-----------------------------------------------------------------------------
-void DisableWatchdogs(void) 
+void DisableWatchdogs(void)
 {
    // Unlock access to IWDG_PR and IWDG_RLR registers
    IWDG1->KR = 0x00005555;
    IWDG2->KR = 0x00005555;
-   
+
    // DMA controller clock enable
     __HAL_RCC_WWDG_CLK_DISABLE();
 
-    
+
   // Set IWDG reload register to minimum to effectively disable it
   IWDG1->RLR = 0x0000;
 
@@ -284,7 +284,7 @@ static void MPU_Config(void)
 
     // Region 1  D1 lower 256
     // Configure remaining RAM_D1 region (read/write, cacheable)
-    MPU_InitStruct.Number = MPU_REGION_NUMBER1; 
+    MPU_InitStruct.Number = MPU_REGION_NUMBER1;
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
     MPU_InitStruct.BaseAddress = RAM_D1_BASE;
     MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;  //256KB;
@@ -298,7 +298,7 @@ static void MPU_Config(void)
 #if 0
     // Region 2  D1 Middle 128
     // Configure remaining RAM_D1 region (read/write, cacheable)
-    MPU_InitStruct.Number = MPU_REGION_NUMBER2; 
+    MPU_InitStruct.Number = MPU_REGION_NUMBER2;
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
     MPU_InitStruct.BaseAddress = RAM_D1_BASE + OFFSET_256K;
     MPU_InitStruct.Size = MPU_REGION_SIZE_128KB;
@@ -325,7 +325,7 @@ static void MPU_Config(void)
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 #endif
     // Region 2  DTCMRAM
-    // Configure DTCMRAM region (read/write, non-cacheable) 
+    // Configure DTCMRAM region (read/write, non-cacheable)
     MPU_InitStruct.Number = MPU_REGION_NUMBER2;
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
     MPU_InitStruct.BaseAddress = 0x20000000; // Start of DTCMRAM
@@ -340,7 +340,7 @@ static void MPU_Config(void)
 
     // Region 3  D2 lower 256K
     // Configure remaining RAM_D1 region (read/write, cacheable)
-    MPU_InitStruct.Number = MPU_REGION_NUMBER3; 
+    MPU_InitStruct.Number = MPU_REGION_NUMBER3;
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
     MPU_InitStruct.BaseAddress = RAM_D2_BASE;
     MPU_InitStruct.Size = MPU_REGION_SIZE_256KB;
@@ -353,7 +353,7 @@ static void MPU_Config(void)
 
     // Region 4  D2 upper 32K for DMA operations
     // Configure remaining RAM_D2 region
-    MPU_InitStruct.Number = MPU_REGION_NUMBER4; 
+    MPU_InitStruct.Number = MPU_REGION_NUMBER4;
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
     MPU_InitStruct.BaseAddress = RAM_D2_BASE + OFFSET_256K;
     MPU_InitStruct.Size = MPU_REGION_SIZE_32KB;
@@ -361,7 +361,7 @@ static void MPU_Config(void)
     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE; // Cacheable for general use
     MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE; // Private access
-    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
     // Region 5 RAM_D3
@@ -374,10 +374,10 @@ static void MPU_Config(void)
     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
     MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE; // Cacheable
     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
-    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-    // Region 6  ITCMRAM 
+    // Region 6  ITCMRAM
     // Configure ITCMRAM region (read/write, non-cacheable)
     MPU_InitStruct.Number = MPU_REGION_NUMBER6; // Next sequential number
     MPU_InitStruct.Enable = MPU_REGION_ENABLE;
@@ -387,7 +387,7 @@ static void MPU_Config(void)
     MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
     MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE; // Non-cacheable
     MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE; // Private access
-    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;    
+    MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
     HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
     /* Enable the MPU with default settings */
@@ -428,7 +428,7 @@ void Fill_DAC_Buffer(uint16_t * pBuff, uint32_t num_items)
 //-----------------------------------------------------------------------------
 //                       HAL_TIM_PWM_PulseFinishedCallback
 //
-// If the duty cycle is 0, HAL_TIM_PWM_PulseFinishedCallback might not be 
+// If the duty cycle is 0, HAL_TIM_PWM_PulseFinishedCallback might not be
 // invoked.Hybrid approach is to use both
 //-----------------------------------------------------------------------------
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
@@ -444,15 +444,15 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 //-----------------------------------------------------------------------------
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    
+
     if(htim->Instance == TIM1)
     {
        // wrapper_sample_as5048_25us();
     }
-    else if (htim->Instance == TIM8) 
+    else if (htim->Instance == TIM8)
     {
        //wrapper_sample_as5048_25us();
-       wrapper_control_loop_25us();
+       wrapper_control_loop_25us();  // Mode-aware: skips velocity control, handles position control
     }
 }
 
@@ -476,7 +476,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 //-----------------------------------------------------------------------------
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi->Instance == SPI4) 
+    if (hspi->Instance == SPI4)
     {
         // Clear the HAL busy state for TX
         hspi->State = HAL_SPI_STATE_READY;
@@ -495,8 +495,8 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 extern void set_async_read_complete();
 void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi->Instance == SPI4) 
-    { 
+    if (hspi->Instance == SPI4)
+    {
         // Clear the HAL busy state for RX
         hspi->State = HAL_SPI_STATE_READY;
 
@@ -512,14 +512,15 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 //-----------------------------------------------------------------------------
 //                          HAL_SPI_ErrorCallback
 //-----------------------------------------------------------------------------
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi) 
+#if 0
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi4)
     {
         //static uint32_t last_overrun_data   = 0;
         //static uint32_t last_overrun_status = 0;
 
-        uint32_t sr_status       = hspi->Instance->SR;        
+        uint32_t sr_status       = hspi->Instance->SR;
         //uint32_t dma_lisr_status = DMA1->LISR;
 
            // Check for EOT (Bit 15)
@@ -588,22 +589,41 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
         HAL_DMA_Abort(hspi->hdmatx);
 
         // Reset the SPI peripheral
-        __HAL_SPI_DISABLE(hspi);
-        __HAL_SPI_ENABLE(hspi);
+         __HAL_SPI_DISABLE(hspi);
 
+         // CRITICAL: Reset HAL state machine completely
+         hspi->State = HAL_SPI_STATE_READY;
+         hspi->ErrorCode = HAL_SPI_ERROR_NONE;
 
-        // Reinitialize SPI DMA transfer for AS5048A read
-   //     start_spi_conversion();
+         // Re-initialize DMA linkage
+         hspi->hdmarx->State = HAL_DMA_STATE_READY;
+         hspi->hdmatx->State = HAL_DMA_STATE_READY;
 
-        // Set error and communication flags
-        //spi_error_detected      = true;
+         __HAL_SPI_ENABLE(hspi);    }
+}
 
+#else
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi == &hspi4)
+    {
+        // Clear all SPI error flags
+        __HAL_SPI_CLEAR_OVRFLAG(hspi);
+        __HAL_SPI_CLEAR_FREFLAG(hspi);
+        __HAL_SPI_CLEAR_MODFFLAG(hspi);
 
-        // Optional: Restart timer triggering the AS5048A read
-       // __HAL_TIM_SET_COUNTER(&htim1, 0);
+        // Clear error code
+        hspi->ErrorCode = HAL_SPI_ERROR_NONE;
+
+        // Reset state to ready
+        hspi->State = HAL_SPI_STATE_READY;
+
+        // DON'T abort DMA - let it continue!
+        // The error might just be a transient AS5048A error bit
     }
 }
 
+#endif
 //-----------------------------------------------------------------------------
 //                        HAL_DMA_ErrorCallback
 //-----------------------------------------------------------------------------
@@ -626,7 +646,7 @@ void HAL_DMA_ErrorCallback(DMA_HandleTypeDef *hdma)
     {
         // Handle Direct Mode Error
         __BKPT(0);
-    }    
+    }
 }
 
 
@@ -635,7 +655,7 @@ void HAL_DMA_ErrorCallback(DMA_HandleTypeDef *hdma)
 //-----------------------------------------------------------------------------
 //                             enable_swo
 //-----------------------------------------------------------------------------
-void enable_swo(void) 
+void enable_swo(void)
 {
     // Enable trace and debug blocks in CoreDebug
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -665,7 +685,7 @@ void enable_swo(void)
 //-----------------------------------------------------------------------------
 //                            Start_ADC_DMA
 //-----------------------------------------------------------------------------
-HAL_StatusTypeDef Start_ADC_DMA(void) 
+HAL_StatusTypeDef Start_ADC_DMA(void)
 {
     return HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_dma_result, ADC_BUFFER_SIZE);
 }
@@ -688,7 +708,7 @@ int _write(int file, char *ptr, int len) {
 //-----------------------------------------------------------------------------
 //                            ITM_Init
 //-----------------------------------------------------------------------------
-void ITM_Init(void) 
+void ITM_Init(void)
 {
     // Preserve other bits in DEMCR and enable only the TRCENA bit
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  // Set TRCENA, preserving other bits
@@ -758,12 +778,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
   // FLASH_LATENCY_2
-  HAL_StatusTypeDef status = HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7); 
+  HAL_StatusTypeDef status = HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7);
   if (status != HAL_OK)
   {
     Error_Handler();
   }
-  SystemCoreClockUpdate(); 
+  SystemCoreClockUpdate();
   HAL_RCC_MCOConfig(RCC_MCO2, RCC_MCO2SOURCE_SYSCLK, RCC_MCODIV_1);
 }
 
@@ -850,7 +870,7 @@ static void MX_ADC1_Init(void)
     hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
     hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;    // End of conversion after each conversion
     hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;         // Preserve data on overrun
-    hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;     
+    hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;
     hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_CIRCULAR;
     if (HAL_ADC_Init(&hadc1) != HAL_OK)
     {
@@ -930,15 +950,15 @@ static void MX_DMA_Init(void)
 {
   __HAL_RCC_DMA1_CLK_ENABLE();
 
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn,
                        IRQ_PRIORITY_ADC, 0);
   HAL_NVIC_EnableIRQ(  DMA1_Stream0_IRQn);
-  
-  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 
+
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn,
                        IRQ_PRIORITY_DMA_SPI_RX, 0);
   HAL_NVIC_EnableIRQ(  DMA1_Stream3_IRQn);
-   
-  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 
+
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn,
                        IRQ_PRIORITY_DMA_SPI_TX, 0);
   HAL_NVIC_EnableIRQ(  DMA1_Stream4_IRQn);
 
@@ -948,7 +968,7 @@ static void MX_DMA_Init(void)
 
  // HAL_NVIC_SetPriority(SPI4_IRQn, IRQ_PRIORITY_SPI, 0);
  // HAL_NVIC_EnableIRQ(SPI4_IRQn);
-  
+
 }
 #if 0
 //-----------------------------------------------------------------------------
@@ -957,7 +977,7 @@ static void MX_DMA_Init(void)
 static void MX_SPI2_Init(void)
 {
   //HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_SET);
-  
+
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
@@ -1005,7 +1025,7 @@ static void MX_SPI4_Init(void)
   hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi4.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi4.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;  // 100 MHz / 16 = 6.25 MHz (under 10 MHz AS5048A max)
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16; //16;  // 100 MHz / 16 = 6.25 MHz (under 10 MHz AS5048A max)
   hspi4.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1041,7 +1061,7 @@ static void MX_SPI4_Init(void)
    hspi4.ErrorCallback = HAL_SPI_ErrorCallback;
 
 
-  
+
   if (HAL_SPI_Init(&hspi4) != HAL_OK)
   {
     Error_Handler();
@@ -1049,7 +1069,7 @@ static void MX_SPI4_Init(void)
 
   hspi4.Instance->CR2 = (1 << SPI_CR2_TSIZE_Pos);
   SET_BIT(hspi4.Instance->CFG1, SPI_CFG1_RXDMAEN | SPI_CFG1_TXDMAEN);
-  
+
   __HAL_SPI_ENABLE_IT(&hspi4,  SPI_IT_ERR);
 }
 
@@ -1078,13 +1098,13 @@ static void MX_SPI4_Init(void)
   {
     Error_Handler();
   }
-  
+
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  
+
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -1096,7 +1116,7 @@ static void MX_SPI4_Init(void)
   {
     Error_Handler();
   }
-  
+
   sConfigOC.OCMode       = TIM_OCMODE_PWM1;
   sConfigOC.Pulse        = 0;
   sConfigOC.OCPolarity   = TIM_OCPOLARITY_HIGH;
@@ -1128,7 +1148,7 @@ static void MX_SPI4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
-  
+
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim1);  // Force the main output enable for TIM1
 
@@ -1200,7 +1220,7 @@ static void MX_TIM2_Init(void)
    }
 
   Fill_DAC_Buffer(dac_buffer, sizeof(dac_buffer)/sizeof(dac_buffer[0]));  // Define this function as needed
-  
+
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
@@ -1271,7 +1291,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  
+
   sConfigOC.OCMode       = TIM_OCMODE_PWM1;
   sConfigOC.Pulse        = 0;
   sConfigOC.OCPolarity   = TIM_OCPOLARITY_HIGH;
@@ -1317,7 +1337,7 @@ static void MX_TIM2_Init(void)
  // }
 
 
-  
+
   // Force the output to be enabled if using complementary outputs or if the outputs were not properly enabled
   __HAL_TIM_MOE_ENABLE(&htim8);  // Force the main output enable for TIM8
 
@@ -1466,9 +1486,9 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-  
+
   __BKPT(0); // Trigger breakpoint for debugging
-  
+
   while (1)
   {
   }
@@ -1494,7 +1514,7 @@ void assert_failed(uint8_t *file, uint32_t line)
    //  ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
-#endif // USE_FULL_ASSERT 
+#endif // USE_FULL_ASSERT
 
 
 
@@ -1543,9 +1563,9 @@ void Disable_TIM4_Interrupt(void)
          // Disable TIM4 interrupt in the NVIC
          HAL_NVIC_DisableIRQ(TIM4_IRQn);
      }
-    
+
      // Disable TIM4 clock if it's not used elsewhere
-     //if (__HAL_RCC_TIM4_IS_CLK_ENABLED()) 
+     //if (__HAL_RCC_TIM4_IS_CLK_ENABLED())
      {
          __HAL_RCC_TIM4_CLK_DISABLE();
      }
@@ -1566,19 +1586,19 @@ int main(void)
     {
         __BKPT();
     }
-    
+
     SystemClock_Config();
 
 
-    
+
     CPU_CACHE_Enable();
 
-    
+
 
     MPU_Config();
 
 
-    
+
 	//__HAL_RCC_WWDG_CLK_DISABLE();
     // HAL_NVIC_DisableIRQ(WWDG_IRQn);
 
@@ -1681,7 +1701,7 @@ Error_Handler();
   HAL_SPI_MspInit(&hspi4);
 
 #if 0
-  
+
   __attribute__((aligned(4))) uint16_t CLEAR = 0x8001;
   __attribute__((aligned(4))) volatile uint16_t result= 0xDEAD;
   if(HAL_OK !=  HAL_SPI_TransmitReceive(&hspi2,
@@ -1696,11 +1716,11 @@ Error_Handler();
 
   MX_TIM1_Init();
   MX_TIM8_Init();
-  TIM1->DIER |= TIM_DIER_UIE; 
-  
- 
+  TIM1->DIER |= TIM_DIER_UIE;
+
+
 #if 0
-  if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET) 
+  if (hspi2.State == HAL_SPI_STATE_READY || hspi2.State == HAL_SPI_STATE_RESET)
   {
       status = HAL_SPI_RegisterCallback(&hspi2, HAL_SPI_TX_RX_COMPLETE_CB_ID, SPI_TxRx_completion_callback);
       if(HAL_OK != status) { Error_Handler(); }
@@ -1734,11 +1754,11 @@ Error_Handler();
   uint32_t ccer_after = TIM8->CCER;
   volatile bool cc2e_after = (ccer_after & TIM_CCER_CC2E) != 0;
   volatile bool cc2ne_after = (ccer_after & TIM_CCER_CC2NE) != 0;
-  
+
   // Check CCR2 register values (compare registers) - these determine duty cycle
   volatile uint32_t ccr2_tim8 = TIM8->CCR2;
   volatile uint32_t ccr2_tim1 = TIM1->CCR2;
-  
+
   // Check ARR (auto-reload) values
   volatile uint32_t arr_tim8 = TIM8->ARR;
   volatile uint32_t arr_tim1 = TIM1->ARR;
@@ -1851,9 +1871,7 @@ if (cc2e_enabled || cc2ne_enabled || tim1_cc2e || tim1_cc2ne || cc2p_tim8 || cc2
 
       // Nothing to do here; everything is handled in interrupts
        __WFI();  // Wait for interrupt (low power)
-    
+
   }
   /* USER CODE END 3 */
 }
-
-
